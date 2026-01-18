@@ -15,7 +15,7 @@ app.innerHTML = `
       <p class="eyebrow">FocusHighlighter</p>
       <h1>Drop a PDF or Word doc. See page 1 instantly.</h1>
       <p class="lede">
-        Upload a PDF to render page 1 with highlights, or open a DOCX for a clean reading view.
+        Upload a PDF to render page 1 with highlights, open a DOCX for a clean reading view, or fetch a URL.
       </p>
     </header>
     <section class="stage">
@@ -23,7 +23,7 @@ app.innerHTML = `
         <div>
           <h2>Document upload</h2>
           <p class="muted">
-            PDFs render page 1 with highlights. DOCX files open a sanitized reading view.
+            PDFs render page 1 with highlights. DOCX files open a sanitized reading view. URLs fetch through r.jina.ai.
           </p>
         </div>
         <div class="upload-options">
@@ -42,16 +42,31 @@ app.innerHTML = `
             <span class="dropzone-subtitle">opens a clean reading view</span>
           </label>
         </div>
+        <div class="url-panel">
+          <label class="url-label" for="url-input">Paste a URL</label>
+          <div class="url-row">
+            <input
+              id="url-input"
+              class="url-input"
+              type="url"
+              placeholder="https://example.com/article"
+              inputmode="url"
+              autocomplete="url"
+            />
+            <button id="url-fetch" class="secondary-button" type="button">Fetch URL</button>
+          </div>
+          <p class="muted url-note">Fetched through r.jina.ai for readability.</p>
+        </div>
         <div class="upload-meta">
           <p id="file-name" class="meta-line">No file selected.</p>
-          <p id="file-status" class="meta-line">Upload a PDF or DOCX to get started.</p>
+          <p id="file-status" class="meta-line">Upload a PDF, DOCX, or URL to get started.</p>
         </div>
       </article>
       <article class="viewer-card">
         <div class="viewer-header">
           <div>
             <h2>Page preview</h2>
-            <p class="muted">PDF.js canvas render or DOCX reading view</p>
+            <p class="muted">PDF.js canvas render or reading view</p>
           </div>
           <span id="page-indicator" class="pill">Page 1 / -</span>
         </div>
@@ -103,13 +118,15 @@ app.innerHTML = `
         </p>
       </div>
       <div id="study-strip-list" class="strip-list" role="list"></div>
-      <p id="study-strip-empty" class="muted strip-empty">Upload a PDF to populate the study strip.</p>
+      <p id="study-strip-empty" class="muted strip-empty">Upload a PDF, DOCX, or URL to populate the study strip.</p>
     </section>
   </main>
 `;
 
 const pdfInput = document.querySelector<HTMLInputElement>('#pdf-input');
 const docxInput = document.querySelector<HTMLInputElement>('#docx-input');
+const urlInput = document.querySelector<HTMLInputElement>('#url-input');
+const urlFetchButton = document.querySelector<HTMLButtonElement>('#url-fetch');
 const pdfDropzone = document.querySelector<HTMLLabelElement>('#pdf-dropzone');
 const docxDropzone = document.querySelector<HTMLLabelElement>('#docx-dropzone');
 const fileName = document.querySelector<HTMLParagraphElement>('#file-name');
@@ -141,8 +158,9 @@ let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
 let pdfBytes: ArrayBuffer | null = null;
 let currentFileName: string | null = null;
 const pinnedHighlightIds = new Set<string>();
-type DocumentSourceKind = 'pdf' | 'docx' | null;
+type DocumentSourceKind = 'pdf' | 'docx' | 'url' | null;
 let currentSourceKind: DocumentSourceKind = null;
+type ReadingSourceKind = 'docx' | 'url';
 
 type IndexedPage =
   | {
@@ -153,7 +171,7 @@ type IndexedPage =
       highlights: SentenceSegment[];
     }
   | {
-      source: 'docx';
+      source: ReadingSourceKind;
       pageNumber: number;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
@@ -785,7 +803,7 @@ const setViewerMode = (mode: DocumentSourceKind) => {
     return;
   }
   viewerStage.classList.toggle('is-ready', mode !== null);
-  viewerStage.classList.toggle('is-docx', mode === 'docx');
+  viewerStage.classList.toggle('is-docx', mode === 'docx' || mode === 'url');
 };
 
 const resetProgress = () => {
@@ -922,6 +940,265 @@ const sanitizeDocxHtml = (html: string) => {
   }
 
   return doc.body.innerHTML.trim();
+};
+
+const getReadingLabel = (sourceKind: ReadingSourceKind) => (sourceKind === 'url' ? 'URL' : 'DOCX');
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const escapeHtmlAttribute = (value: string) => escapeHtml(value);
+
+const sanitizeUrlHref = (href: string, baseUrl: URL | null) => {
+  const trimmed = href.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith('#')) {
+    return trimmed;
+  }
+  const lowered = trimmed.toLowerCase();
+  if (lowered.startsWith('javascript:') || lowered.startsWith('data:')) {
+    return null;
+  }
+  try {
+    const url = baseUrl ? new URL(trimmed, baseUrl) : new URL(trimmed);
+    const allowed = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+    if (allowed.has(url.protocol)) {
+      return url.href;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+};
+
+const renderInlineMarkdown = (input: string, baseUrl: URL | null) => {
+  const codeTokens: string[] = [];
+  const linkTokens: string[] = [];
+
+  let working = input.replace(/`([^`]+)`/g, (_match, code) => {
+    const token = `@@CODE${codeTokens.length}@@`;
+    codeTokens.push(`<code>${escapeHtml(code)}</code>`);
+    return token;
+  });
+
+  working = working.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+    const safeHref = sanitizeUrlHref(href, baseUrl);
+    const token = `@@LINK${linkTokens.length}@@`;
+    if (!safeHref) {
+      linkTokens.push(escapeHtml(label));
+      return token;
+    }
+    const safeLabel = escapeHtml(label);
+    const safeHrefValue = escapeHtmlAttribute(safeHref);
+    linkTokens.push(
+      `<a href="${safeHrefValue}" target="_blank" rel="noreferrer noopener">${safeLabel}</a>`,
+    );
+    return token;
+  });
+
+  let escaped = escapeHtml(working);
+  escaped = escaped.replace(/(\*\*|__)(.+?)\1/g, '<strong>$2</strong>');
+  escaped = escaped.replace(/(\*|_)([^*_]+)\1/g, '<em>$2</em>');
+
+  codeTokens.forEach((tokenValue, index) => {
+    escaped = escaped.split(`@@CODE${index}@@`).join(tokenValue);
+  });
+  linkTokens.forEach((tokenValue, index) => {
+    escaped = escaped.split(`@@LINK${index}@@`).join(tokenValue);
+  });
+
+  return escaped;
+};
+
+// Minimal markdown rendering for r.jina.ai responses.
+const renderMarkdownToHtml = (markdown: string, baseUrl: URL | null) => {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const output: string[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let listItems: string[] = [];
+  let quoteLines: string[] = [];
+  let paragraphLines: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraphLines.length) {
+      return;
+    }
+    const text = paragraphLines.join(' ').trim();
+    if (text) {
+      output.push(`<p>${renderInlineMarkdown(text, baseUrl)}</p>`);
+    }
+    paragraphLines = [];
+  };
+
+  const flushList = () => {
+    if (!listType || !listItems.length) {
+      listType = null;
+      listItems = [];
+      return;
+    }
+    const items = listItems.map((item) => `<li>${renderInlineMarkdown(item, baseUrl)}</li>`).join('');
+    output.push(`<${listType}>${items}</${listType}>`);
+    listType = null;
+    listItems = [];
+  };
+
+  const flushQuote = () => {
+    if (!quoteLines.length) {
+      return;
+    }
+    const body = quoteLines
+      .map((line) => `<p>${renderInlineMarkdown(line, baseUrl)}</p>`)
+      .join('');
+    output.push(`<blockquote>${body}</blockquote>`);
+    quoteLines = [];
+  };
+
+  const flushCode = () => {
+    if (!codeLines.length) {
+      return;
+    }
+    output.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+    codeLines = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (inCodeBlock) {
+      if (trimmed.startsWith('```')) {
+        flushCode();
+        inCodeBlock = false;
+        continue;
+      }
+      codeLines.push(line);
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      inCodeBlock = true;
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      const level = headingMatch[1].length;
+      const text = headingMatch[2].trim();
+      output.push(`<h${level}>${renderInlineMarkdown(text, baseUrl)}</h${level}>`);
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      output.push('<hr />');
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*([-*+]|\d+\.)\s+(.*)$/);
+    if (listMatch) {
+      flushParagraph();
+      flushQuote();
+      const marker = listMatch[1];
+      const item = listMatch[2];
+      const nextType = marker.endsWith('.') ? 'ol' : 'ul';
+      if (listType && listType !== nextType) {
+        flushList();
+      }
+      listType = nextType;
+      listItems.push(item);
+      continue;
+    }
+
+    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+    if (quoteMatch) {
+      flushParagraph();
+      flushList();
+      const quoteText = quoteMatch[1].trim();
+      if (quoteText) {
+        quoteLines.push(quoteText);
+      }
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      continue;
+    }
+
+    paragraphLines.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  flushQuote();
+  if (inCodeBlock) {
+    flushCode();
+  }
+
+  return output.join('\n');
+};
+
+const formatUrlDisplayName = (url: URL) => {
+  const path = url.pathname && url.pathname !== '/' ? url.pathname : '';
+  const label = `${url.hostname}${path}`;
+  if (label.length <= 80) {
+    return label;
+  }
+  return `${label.slice(0, 77)}...`;
+};
+
+const parseUrlInput = (input: string) => {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let normalized = trimmed;
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = `https://${normalized}`;
+  }
+
+  const jinaPattern = /^https?:\/\/r\.jina\.ai\//i;
+  let sourceUrl = normalized;
+  let jinaUrl = normalized;
+
+  if (jinaPattern.test(normalized)) {
+    const stripped = normalized.replace(jinaPattern, '');
+    if (/^https?:\/\//i.test(stripped)) {
+      sourceUrl = stripped;
+    }
+  } else {
+    jinaUrl = `https://r.jina.ai/${sourceUrl}`;
+  }
+
+  try {
+    const parsedSource = new URL(sourceUrl);
+    const parsedJina = new URL(jinaUrl);
+    return {
+      sourceUrl: parsedSource,
+      jinaUrl: parsedJina.toString(),
+      displayName: formatUrlDisplayName(parsedSource),
+    };
+  } catch (error) {
+    return null;
+  }
 };
 
 const docxBlockSelector = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th';
@@ -1160,7 +1437,7 @@ const renderDocxPageHighlights = (
   return rendered;
 };
 
-const indexDocxPage = async (page: DocxPage, processId: number) => {
+const indexDocxPage = async (page: DocxPage, processId: number, sourceKind: ReadingSourceKind) => {
   const textMap = buildDocxPageTextMap(page.content);
   const sentences = segmentDocxPageText(textMap, page.pageNumber);
   let embeddings: Float32Array[] | null = null;
@@ -1169,7 +1446,7 @@ const indexDocxPage = async (page: DocxPage, processId: number) => {
     try {
       embeddings = await computeEmbeddingsForSentences(sentences);
     } catch (error) {
-      console.debug('Embedding failed for DOCX page', page.pageNumber, error);
+      console.debug(`Embedding failed for ${getReadingLabel(sourceKind)} page`, page.pageNumber, error);
     }
   }
 
@@ -1179,10 +1456,14 @@ const indexDocxPage = async (page: DocxPage, processId: number) => {
 
   const highlights = selectAutoHighlights(sentences, embeddings);
   renderDocxPageHighlights(page, textMap, highlights);
-  return { source: 'docx', pageNumber: page.pageNumber, sentences, highlights };
+  return { source: sourceKind, pageNumber: page.pageNumber, sentences, highlights };
 };
 
-const startDocxIndexing = async (pages: DocxPage[], processId: number) => {
+const startDocxIndexing = async (
+  pages: DocxPage[],
+  processId: number,
+  sourceKind: ReadingSourceKind,
+) => {
   for (const page of pages) {
     if (processId !== backgroundProcessId) {
       return;
@@ -1195,14 +1476,14 @@ const startDocxIndexing = async (pages: DocxPage[], processId: number) => {
     );
 
     try {
-      const entry = await indexDocxPage(page, processId);
+      const entry = await indexDocxPage(page, processId, sourceKind);
       if (!entry) {
         return;
       }
       indexedPages.set(entry.pageNumber, entry);
       renderStudyStrip();
     } catch (error) {
-      console.error('Failed to index DOCX page', page.pageNumber, error);
+      console.error(`Failed to index ${getReadingLabel(sourceKind)} page`, page.pageNumber, error);
     }
 
     backgroundProcessedPages = Math.min(backgroundTotalPages, backgroundProcessedPages + 1);
@@ -1234,20 +1515,21 @@ const updateDocxPageIndicator = () => {
   setPageIndicator(current, docxPages.length);
 };
 
-const renderDocxDocument = async (html: string) => {
+const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) => {
   if (!docxViewer) {
     return;
   }
 
+  const sourceLabel = getReadingLabel(sourceKind);
   indexedPages.clear();
   pinnedHighlightIds.clear();
   renderStudyStrip();
   docxPages = paginateDocxHtml(html);
 
   if (docxPages.length === 0) {
-    docxViewer.innerHTML = '<p class="muted">No readable text found in this DOCX.</p>';
-    setPageIndicatorLabel('DOCX preview');
-    setStatus('DOCX loaded, but no readable text found.');
+    docxViewer.innerHTML = `<p class="muted">No readable text found in this ${sourceLabel}.</p>`;
+    setPageIndicatorLabel(`${sourceLabel} preview`);
+    setStatus(`${sourceLabel} loaded, but no readable text found.`);
     setProgress(0, 0, 'No readable text found.');
     return;
   }
@@ -1260,8 +1542,8 @@ const renderDocxDocument = async (html: string) => {
   docxViewer.scrollTop = 0;
 
   const firstPage = docxPages[0];
-  setStatus('Highlighting DOCX page 1...');
-  const firstEntry = await indexDocxPage(firstPage, processId);
+  setStatus(`Highlighting ${sourceLabel} page 1...`);
+  const firstEntry = await indexDocxPage(firstPage, processId, sourceKind);
   if (!firstEntry) {
     return;
   }
@@ -1269,17 +1551,17 @@ const renderDocxDocument = async (html: string) => {
   renderStudyStrip();
   backgroundProcessedPages = 1;
 
-  const statusPrefix = `DOCX page 1 highlighted with ${firstEntry.highlights.length} sentences.`;
+  const statusPrefix = `${sourceLabel} page 1 highlighted with ${firstEntry.highlights.length} sentences.`;
   setStatus(statusPrefix);
   const progressMessage =
     backgroundTotalPages > 1
       ? 'Page 1 ready. Indexing remaining pages...'
-      : 'Single-page DOCX ready.';
+      : `Single-page ${sourceLabel} ready.`;
   setProgress(backgroundProcessedPages, backgroundTotalPages, progressMessage);
   updateDocxPageIndicator();
 
   if (backgroundTotalPages > 1) {
-    void startDocxIndexing(docxPages.slice(1), processId);
+    void startDocxIndexing(docxPages.slice(1), processId, sourceKind);
   }
 };
 
@@ -1307,13 +1589,66 @@ const loadDocx = async (file: File) => {
     setViewerMode('docx');
     setStatus('Paginating DOCX into pages...');
     setProgress(0, 0, 'Preparing DOCX pages...');
-    await renderDocxDocument(docxHtml ?? '');
+    await renderDocxDocument(docxHtml ?? '', 'docx');
   } catch (error) {
     console.error(error);
     setStatus('Unable to render this DOCX. Try another file.');
     setProgress(0, 0, 'DOCX rendering failed.');
     if (viewerPlaceholder) {
       viewerPlaceholder.textContent = 'DOCX rendering failed. Upload another file.';
+    }
+  }
+};
+
+const loadUrl = async (input: string) => {
+  const parsed = parseUrlInput(input);
+  if (!parsed) {
+    setStatus('Enter a valid URL to fetch.');
+    return;
+  }
+
+  resetViewer();
+  const processId = backgroundProcessId;
+  setFileName(`URL: ${parsed.displayName}`);
+  currentFileName = parsed.displayName;
+  setStatus('Fetching URL...');
+  setProgress(0, 0, 'Fetching URL content via r.jina.ai...');
+  if (urlFetchButton) {
+    urlFetchButton.disabled = true;
+  }
+  if (urlInput) {
+    urlInput.disabled = true;
+  }
+
+  try {
+    const response = await fetch(parsed.jinaUrl);
+    if (!response.ok) {
+      throw new Error(`URL fetch failed with status ${response.status}`);
+    }
+    const text = await response.text();
+    if (processId !== backgroundProcessId) {
+      return;
+    }
+    const renderedHtml = renderMarkdownToHtml(text, parsed.sourceUrl);
+    const sanitizedHtml = sanitizeDocxHtml(renderedHtml);
+    docxHtml = sanitizedHtml;
+    setViewerMode('url');
+    setStatus('Paginating URL content into pages...');
+    setProgress(0, 0, 'Preparing URL pages...');
+    await renderDocxDocument(docxHtml ?? '', 'url');
+  } catch (error) {
+    console.error(error);
+    setStatus('Unable to fetch this URL. Check the link and try again.');
+    setProgress(0, 0, 'URL fetch failed.');
+    if (viewerPlaceholder) {
+      viewerPlaceholder.textContent = 'URL fetch failed. Try another link.';
+    }
+  } finally {
+    if (urlFetchButton) {
+      urlFetchButton.disabled = false;
+    }
+    if (urlInput) {
+      urlInput.disabled = false;
     }
   }
 };
@@ -1966,10 +2301,12 @@ const renderStudyStrip = () => {
   if (!sections.length) {
     if (currentSourceKind === 'docx') {
       studyStripEmpty.textContent = 'DOCX highlights will appear here once available.';
+    } else if (currentSourceKind === 'url') {
+      studyStripEmpty.textContent = 'URL highlights will appear here once available.';
     } else {
       studyStripEmpty.textContent =
         indexedPages.size === 0
-          ? 'Upload a PDF to populate the study strip.'
+          ? 'Upload a PDF, DOCX, or URL to populate the study strip.'
           : 'No highlights available yet.';
     }
     studyStripEmpty.hidden = false;
@@ -2335,6 +2672,21 @@ docxInput?.addEventListener('change', (event) => {
   target.value = '';
 });
 
+urlFetchButton?.addEventListener('click', () => {
+  if (!urlInput) {
+    return;
+  }
+  void loadUrl(urlInput.value);
+});
+
+urlInput?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  event.preventDefault();
+  void loadUrl(urlInput.value);
+});
+
 bindDropzone(pdfDropzone, (file) => {
   void loadPdf(file);
 });
@@ -2411,7 +2763,7 @@ studyStripList?.addEventListener('click', (event) => {
 
 let docxScrollFrame = 0;
 docxViewer?.addEventListener('scroll', () => {
-  if (currentSourceKind !== 'docx') {
+  if (currentSourceKind !== 'docx' && currentSourceKind !== 'url') {
     return;
   }
   if (docxScrollFrame) {
@@ -2432,9 +2784,9 @@ window.addEventListener('resize', () => {
       });
       return;
     }
-    if (currentSourceKind === 'docx' && docxHtml) {
+    if ((currentSourceKind === 'docx' || currentSourceKind === 'url') && docxHtml) {
       backgroundProcessId += 1;
-      void renderDocxDocument(docxHtml);
+      void renderDocxDocument(docxHtml, currentSourceKind);
     }
   }, 150);
 });

@@ -198,7 +198,14 @@
       "id": "T015",
       "title": "Implement URL fetch via r.jina.ai with markdown/text rendering",
       "priority": 2,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T22:00:06Z",
+      "details": "Added URL fetch via r.jina.ai with markdown rendering into the reading view.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T016",
