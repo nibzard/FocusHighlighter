@@ -13,24 +13,32 @@
       "title": "Scaffold frontend app and tooling (TypeScript, bundler, linting)",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T18:43:18Z",
+      "updated_at": "2026-01-18T18:44:10Z",
       "details": "Scaffolded Vite + TypeScript app with ESLint tooling.",
       "files": [
-        "package.json",
-        "tsconfig.json",
-        "vite.config.ts",
+        ".eslintrc.cjs",
+        ".gitignore",
         "index.html",
+        "package.json",
         "src/main.ts",
         "src/style.css",
-        ".eslintrc.cjs",
-        ".gitignore"
+        "to-do.json",
+        "tsconfig.json",
+        "vite.config.ts"
       ]
     },
     {
       "id": "T002",
       "title": "Build PDF upload flow and render Page 1 with PDF.js viewer",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T18:49:06Z",
+      "details": "Added PDF upload dropzone and rendered page 1 with PDF.js canvas preview.",
+      "files": [
+        "package.json",
+        "src/main.ts",
+        "src/style.css"
+      ]
     },
     {
       "id": "T003",

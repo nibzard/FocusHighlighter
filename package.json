@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "lint": "eslint . --ext .ts"
   },
+  "dependencies": {
+    "pdfjs-dist": "^4.0.379"
+  },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^6.19.1",
     "@typescript-eslint/parser": "^6.19.1",
