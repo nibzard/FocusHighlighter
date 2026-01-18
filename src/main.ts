@@ -108,7 +108,7 @@ app.innerHTML = `
           <button id="download-highlighted" class="primary-button" type="button" disabled>
             Download highlighted PDF
           </button>
-          <p class="muted export-note">Embeds highlight rectangles into the original PDF.</p>
+          <p id="export-note" class="muted export-note">Embeds highlight rectangles into the original PDF.</p>
         </div>
       </article>
     </section>
@@ -159,6 +159,7 @@ const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-s
 const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
 const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
 const downloadButton = document.querySelector<HTMLButtonElement>('#download-highlighted');
+const exportNote = document.querySelector<HTMLParagraphElement>('#export-note');
 const studyStripList = document.querySelector<HTMLDivElement>('#study-strip-list');
 const studyStripEmpty = document.querySelector<HTMLParagraphElement>('#study-strip-empty');
 const studyStripCount = document.querySelector<HTMLSpanElement>('#study-strip-count');
@@ -258,6 +259,11 @@ type DocxPageTextMap = {
   fullText: string;
   blocks: DocxBlock[];
 };
+
+type Html2CanvasRenderer = (
+  element: HTMLElement,
+  options?: Record<string, unknown>,
+) => Promise<HTMLCanvasElement>;
 
 type StudyStripSection = {
   pageNumber: number;
@@ -778,6 +784,29 @@ const setExportEnabled = (enabled: boolean) => {
   }
 };
 
+const getExportNote = (mode: DocumentSourceKind) => {
+  if (mode === 'pdf') {
+    return 'Embeds highlight rectangles into the original PDF.';
+  }
+  if (mode === 'docx') {
+    return 'Generates a highlighted PDF from the reading view; layout may differ from the original DOCX.';
+  }
+  if (mode === 'url') {
+    return 'Generates a highlighted PDF from the reading view; layout may differ from the original web page.';
+  }
+  if (mode === 'text') {
+    return 'Generates a highlighted PDF from the reading view of your pasted text.';
+  }
+  return 'Upload a document to enable export.';
+};
+
+const setExportNote = (mode: DocumentSourceKind) => {
+  if (!exportNote) {
+    return;
+  }
+  exportNote.textContent = getExportNote(mode);
+};
+
 const setPageIndicator = (current: number, total: number | null) => {
   if (!pageIndicator) {
     return;
@@ -820,6 +849,7 @@ const setViewerMode = (mode: DocumentSourceKind) => {
   }
   viewerStage.classList.toggle('is-ready', mode !== null);
   viewerStage.classList.toggle('is-docx', mode === 'docx' || mode === 'url' || mode === 'text');
+  setExportNote(mode);
 };
 
 const resetProgress = () => {
@@ -1587,6 +1617,7 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
     return;
   }
   indexedPages.set(firstEntry.pageNumber, firstEntry);
+  setExportEnabled(true);
   renderStudyStrip();
   backgroundProcessedPages = 1;
 
@@ -2429,7 +2460,92 @@ const getDownloadFileName = (name: string | null) => {
   return `highlighted-${trimmed}.pdf`;
 };
 
+const canvasToPngBlob = (canvas: HTMLCanvasElement) =>
+  new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Failed to capture export image.'));
+        return;
+      }
+      resolve(blob);
+    }, 'image/png');
+  });
+
+const exportReadingViewPdf = async () => {
+  const sourceKind = currentSourceKind;
+  if (sourceKind !== 'docx' && sourceKind !== 'url' && sourceKind !== 'text') {
+    setStatus('Upload a DOCX, URL, or text first to export highlights.');
+    return;
+  }
+
+  if (!docxViewer || docxPages.length === 0) {
+    setStatus('No reading view available to export yet.');
+    return;
+  }
+
+  if (indexedPages.size === 0) {
+    setStatus('Highlights are not ready yet.');
+    return;
+  }
+
+  setExportEnabled(false);
+  const sourceLabel = getReadingLabel(sourceKind);
+  const totalPages = docxPages.length;
+  const processedPages = indexedPages.size;
+  if (processedPages < totalPages) {
+    setStatus(`Exporting highlights for ${processedPages} of ${totalPages} pages...`);
+  } else {
+    setStatus(`Exporting highlighted ${sourceLabel} PDF...`);
+  }
+
+  try {
+    const [{ PDFDocument }, { default: html2canvas }] = await Promise.all([
+      import('pdf-lib'),
+      import('html2canvas'),
+    ]);
+    const pdfDocument = await PDFDocument.create();
+    const scale = Math.min(2, window.devicePixelRatio || 1);
+
+    for (const page of docxPages) {
+      setStatus(`Rendering ${sourceLabel} page ${page.pageNumber} of ${docxPages.length} for export...`);
+      const canvas = await (html2canvas as Html2CanvasRenderer)(page.element, {
+        backgroundColor: '#ffffff',
+        scale,
+        useCORS: true,
+      });
+      const blob = await canvasToPngBlob(canvas);
+      const imageBytes = new Uint8Array(await blob.arrayBuffer());
+      const png = await pdfDocument.embedPng(imageBytes);
+      const pdfPage = pdfDocument.addPage([png.width, png.height]);
+      pdfPage.drawImage(png, { x: 0, y: 0, width: png.width, height: png.height });
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+
+    const outputBytes = await pdfDocument.save();
+    const blob = new Blob([outputBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = getDownloadFileName(currentFileName);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus('Highlighted PDF ready for download.');
+  } catch (error) {
+    console.error(error);
+    setStatus('Failed to export highlighted PDF.');
+  } finally {
+    setExportEnabled(true);
+  }
+};
+
 const exportHighlightedPdf = async () => {
+  if (currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') {
+    await exportReadingViewPdf();
+    return;
+  }
+
   if (!pdfDoc || !pdfBytes) {
     setStatus('Upload a PDF first to export highlights.');
     return;

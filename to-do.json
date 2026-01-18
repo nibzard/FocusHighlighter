@@ -186,7 +186,7 @@
       "title": "Paginate Word/URL/Text into virtual pages and highlight inline spans",
       "priority": 2,
       "status": "done",
-      "updated_at": "2026-01-18T21:48:17Z",
+      "updated_at": "2026-01-18T21:49:00Z",
       "details": "Paginated DOCX content into virtual pages and rendered inline highlights with docx page indexing.",
       "files": [
         "src/main.ts",
@@ -199,7 +199,7 @@
       "title": "Implement URL fetch via r.jina.ai with markdown/text rendering",
       "priority": 2,
       "status": "done",
-      "updated_at": "2026-01-18T22:00:06Z",
+      "updated_at": "2026-01-18T22:04:47Z",
       "details": "Added URL fetch via r.jina.ai with markdown rendering into the reading view.",
       "files": [
         "src/main.ts",
@@ -212,7 +212,7 @@
       "title": "Implement paste-text input flow with virtual page rendering",
       "priority": 2,
       "status": "done",
-      "updated_at": "2026-01-18T22:09:22Z",
+      "updated_at": "2026-01-18T22:11:13Z",
       "details": "Added paste-text input flow with virtual page rendering and study strip support.",
       "files": [
         "src/main.ts",
@@ -224,7 +224,14 @@
       "id": "T017",
       "title": "Export highlighted PDF for Word/URL/Text sources (generated PDF with highlights)",
       "priority": 2,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T22:16:48Z",
+      "details": "Added highlighted PDF export for reading view sources using html2canvas snapshots.",
+      "files": [
+        "package.json",
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T018",
