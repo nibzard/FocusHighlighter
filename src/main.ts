@@ -100,7 +100,52 @@ type PageTextMap = {
   itemRanges: PdfTextItemRange[];
 };
 
+type SentenceSegment = {
+  id: string;
+  page: number;
+  paragraphIndex: number;
+  sentenceIndex: number;
+  charStart: number;
+  charEnd: number;
+  text: string;
+};
+
+type ParagraphRange = {
+  start: number;
+  end: number;
+};
+
+type SegmentedTextChunk = {
+  text: string;
+  index: number;
+};
+
+type SentenceSegmenter = {
+  segment: (input: string) => Iterable<{ segment: string; index: number }>;
+};
+
+type SentenceSegmenterConstructor = new (
+  locales?: string | string[],
+  options?: { granularity: 'sentence' },
+) => SentenceSegmenter;
+
 let currentPageTextMap: PageTextMap | null = null;
+let currentPageSentences: SentenceSegment[] = [];
+
+const getSentenceSegmenter = (): SentenceSegmenter | null => {
+  if (typeof Intl === 'undefined') {
+    return null;
+  }
+
+  const segmenterConstructor = (Intl as { Segmenter?: SentenceSegmenterConstructor }).Segmenter;
+  if (!segmenterConstructor) {
+    return null;
+  }
+
+  return new segmenterConstructor(undefined, { granularity: 'sentence' });
+};
+
+const sentenceSegmenter = getSentenceSegmenter();
 
 const setStatus = (message: string) => {
   if (fileStatus) {
@@ -125,6 +170,7 @@ const resetViewer = () => {
   pdfDoc = null;
   currentPage = null;
   currentPageTextMap = null;
+  currentPageSentences = [];
   if (viewerStage) {
     viewerStage.classList.remove('is-ready');
   }
@@ -159,6 +205,65 @@ const findNextTextItem = (items: PdfTextContent['items'], startIndex: number) =>
   return null;
 };
 
+const getParagraphRanges = (fullText: string): ParagraphRange[] => {
+  const ranges: ParagraphRange[] = [];
+  const separatorRegex = /(?:\r?\n\s*){2,}/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null = null;
+
+  while ((match = separatorRegex.exec(fullText)) !== null) {
+    const end = match.index;
+    if (end > lastIndex) {
+      ranges.push({ start: lastIndex, end });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < fullText.length) {
+    ranges.push({ start: lastIndex, end: fullText.length });
+  }
+
+  return ranges;
+};
+
+const getFallbackSentenceChunks = (paragraphText: string): SegmentedTextChunk[] => {
+  const chunks: SegmentedTextChunk[] = [];
+  const regex = /[^.!?\n]+[.!?]+|[^.!?\n]+(?=\n|$)/g;
+
+  for (const match of paragraphText.matchAll(regex)) {
+    const text = match[0];
+    if (!text) {
+      continue;
+    }
+    chunks.push({ text, index: match.index ?? 0 });
+  }
+
+  if (!chunks.length && paragraphText) {
+    chunks.push({ text: paragraphText, index: 0 });
+  }
+
+  return chunks;
+};
+
+const getSentenceChunks = (paragraphText: string): SegmentedTextChunk[] => {
+  if (!sentenceSegmenter) {
+    return getFallbackSentenceChunks(paragraphText);
+  }
+
+  return Array.from(sentenceSegmenter.segment(paragraphText), (segment) => ({
+    text: segment.segment,
+    index: segment.index,
+  }));
+};
+
+const createSentenceId = (
+  pageNumber: number,
+  paragraphIndex: number,
+  sentenceIndex: number,
+  charStart: number,
+  charEnd: number,
+) => `p${pageNumber}-p${paragraphIndex}-s${sentenceIndex}-${charStart}-${charEnd}`;
+
 const extractPageTextMap = async (page: PDFPageProxy): Promise<PageTextMap> => {
   const textContent = (await page.getTextContent()) as PdfTextContent;
   const items: PdfTextItem[] = [];
@@ -190,6 +295,53 @@ const extractPageTextMap = async (page: PDFPageProxy): Promise<PageTextMap> => {
   }
 
   return { fullText, items, itemRanges };
+};
+
+const segmentPageText = (pageTextMap: PageTextMap, pageNumber: number): SentenceSegment[] => {
+  const sentences: SentenceSegment[] = [];
+  const paragraphRanges = getParagraphRanges(pageTextMap.fullText);
+  let paragraphIndex = 0;
+
+  for (const range of paragraphRanges) {
+    const paragraphText = pageTextMap.fullText.slice(range.start, range.end);
+    if (!paragraphText.trim()) {
+      continue;
+    }
+
+    const sentenceChunks = getSentenceChunks(paragraphText);
+    let sentenceIndex = 0;
+
+    for (const chunk of sentenceChunks) {
+      const rawText = chunk.text;
+      const leadingWhitespace = rawText.match(/^\s*/)?.[0].length ?? 0;
+      const trailingWhitespace = rawText.match(/\s*$/)?.[0].length ?? 0;
+      const trimmedText = rawText.slice(leadingWhitespace, rawText.length - trailingWhitespace);
+
+      if (!trimmedText) {
+        continue;
+      }
+
+      const charStart = range.start + chunk.index + leadingWhitespace;
+      const charEnd = range.start + chunk.index + rawText.length - trailingWhitespace;
+
+      sentences.push({
+        id: createSentenceId(pageNumber, paragraphIndex, sentenceIndex, charStart, charEnd),
+        page: pageNumber,
+        paragraphIndex,
+        sentenceIndex,
+        charStart,
+        charEnd,
+        text: trimmedText,
+      });
+      sentenceIndex += 1;
+    }
+
+    if (sentenceIndex > 0) {
+      paragraphIndex += 1;
+    }
+  }
+
+  return sentences;
 };
 
 const renderPage = async (page: PDFPageProxy) => {
@@ -247,8 +399,9 @@ const loadPdf = async (file: File) => {
     setStatus(`Rendering page 1 of ${pdfDoc.numPages}...`);
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
+    currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     setStatus(
-      `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items.`,
+      `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items and ${currentPageSentences.length} sentences.`,
     );
   } catch (error) {
     console.error(error);

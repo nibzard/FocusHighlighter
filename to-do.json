@@ -45,17 +45,24 @@
       "title": "Extract PDF page text with offsets and map to PDF.js text items",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T18:52:21Z",
+      "updated_at": "2026-01-18T18:52:57Z",
       "details": "Extracted PDF page text into a full string with per-item character ranges for mapping back to PDF.js text items.",
       "files": [
-        "src/main.ts"
+        "src/main.ts",
+        "to-do.json"
       ]
     },
     {
       "id": "T004",
       "title": "Implement sentence segmentation utility with page/position metadata",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T18:56:17Z",
+      "details": "Added sentence segmentation utility with paragraph/sentence indices and offsets for PDF page text.",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T005",
