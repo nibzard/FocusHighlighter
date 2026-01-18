@@ -79,6 +79,17 @@ app.innerHTML = `
         </div>
         <span id="study-strip-count" class="pill">0 pinned</span>
       </div>
+      <div class="strip-actions">
+        <div class="strip-action-row">
+          <button id="study-strip-copy" class="strip-action" type="button" disabled>Copy highlights</button>
+          <button id="study-strip-download" class="strip-action" type="button" disabled>
+            Download highlights.md
+          </button>
+        </div>
+        <p id="study-strip-export-note" class="muted strip-export-note">
+          Exports pinned lines when available, otherwise all highlights.
+        </p>
+      </div>
       <div id="study-strip-list" class="strip-list" role="list"></div>
       <p id="study-strip-empty" class="muted strip-empty">Upload a PDF to populate the study strip.</p>
     </section>
@@ -103,6 +114,9 @@ const downloadButton = document.querySelector<HTMLButtonElement>('#download-high
 const studyStripList = document.querySelector<HTMLDivElement>('#study-strip-list');
 const studyStripEmpty = document.querySelector<HTMLParagraphElement>('#study-strip-empty');
 const studyStripCount = document.querySelector<HTMLSpanElement>('#study-strip-count');
+const studyStripCopyButton = document.querySelector<HTMLButtonElement>('#study-strip-copy');
+const studyStripDownloadButton = document.querySelector<HTMLButtonElement>('#study-strip-download');
+const studyStripExportNote = document.querySelector<HTMLParagraphElement>('#study-strip-export-note');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
@@ -165,6 +179,18 @@ type SentenceSegment = {
   charStart: number;
   charEnd: number;
   text: string;
+};
+
+type StudyStripSection = {
+  pageNumber: number;
+  highlights: SentenceSegment[];
+};
+
+type StudyStripExportMode = 'pinned' | 'all';
+
+type StudyStripExportPayload = {
+  mode: StudyStripExportMode;
+  sections: StudyStripSection[];
 };
 
 type ParagraphRange = {
@@ -1212,6 +1238,68 @@ const buildStudyStripSections = () =>
     }))
     .filter((section) => section.highlights.length > 0);
 
+const getStudyStripExportPayload = (): StudyStripExportPayload | null => {
+  const sections = buildStudyStripSections();
+  if (!sections.length) {
+    return null;
+  }
+
+  const pinnedSections = sections
+    .map((section) => ({
+      pageNumber: section.pageNumber,
+      highlights: section.highlights.filter((sentence) => pinnedHighlightIds.has(sentence.id)),
+    }))
+    .filter((section) => section.highlights.length > 0);
+
+  if (pinnedSections.length > 0) {
+    return { mode: 'pinned', sections: pinnedSections };
+  }
+
+  return { mode: 'all', sections };
+};
+
+const formatStudyStripMarkdown = (payload: StudyStripExportPayload) => {
+  const titleSuffix = currentFileName?.trim() ? ` (${currentFileName.trim()})` : '';
+  const lines: string[] = [`# Study Strip${titleSuffix}`];
+
+  for (const section of payload.sections) {
+    lines.push('', `## Page ${section.pageNumber}`);
+    for (const sentence of section.highlights) {
+      const text = sentence.text.trim();
+      if (!text) {
+        continue;
+      }
+      lines.push(`- ${text}`);
+    }
+  }
+
+  return `${lines.join('\n').trim()}\n`;
+};
+
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  if (typeof document.execCommand !== 'function') {
+    return false;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '0';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const success = document.execCommand('copy');
+  textarea.remove();
+  return success;
+};
+
 const updateStudyStripSummary = (pinnedCount: number, totalCount: number) => {
   if (!studyStripCount) {
     return;
@@ -1223,6 +1311,25 @@ const updateStudyStripSummary = (pinnedCount: number, totalCount: number) => {
   }
   studyStripCount.textContent = `${pinnedCount} pinned`;
   studyStripCount.title = `${totalCount} highlighted lines`;
+};
+
+const setStudyStripExportState = (pinnedCount: number, totalCount: number) => {
+  const hasHighlights = totalCount > 0;
+  if (studyStripCopyButton) {
+    studyStripCopyButton.disabled = !hasHighlights;
+  }
+  if (studyStripDownloadButton) {
+    studyStripDownloadButton.disabled = !hasHighlights;
+  }
+  if (!studyStripExportNote) {
+    return;
+  }
+  if (!hasHighlights) {
+    studyStripExportNote.textContent = 'No highlights to export yet.';
+    return;
+  }
+  studyStripExportNote.textContent =
+    pinnedCount > 0 ? 'Exports pinned lines only.' : 'Exports all highlighted lines.';
 };
 
 const renderStudyStrip = () => {
@@ -1300,6 +1407,7 @@ const renderStudyStrip = () => {
   }
 
   updateStudyStripSummary(totalPinned, totalHighlights);
+  setStudyStripExportState(totalPinned, totalHighlights);
 
   if (!sections.length) {
     studyStripEmpty.textContent =
@@ -1653,6 +1761,55 @@ dropzone?.addEventListener('drop', (event) => {
 
 downloadButton?.addEventListener('click', () => {
   void exportHighlightedPdf();
+});
+
+studyStripCopyButton?.addEventListener('click', async () => {
+  const payload = getStudyStripExportPayload();
+  if (!payload) {
+    setStatus('No highlights available to export.');
+    return;
+  }
+  const markdown = formatStudyStripMarkdown(payload);
+  if (!markdown.trim()) {
+    setStatus('No highlights available to export.');
+    return;
+  }
+  try {
+    const copied = await copyTextToClipboard(markdown);
+    if (!copied) {
+      setStatus('Unable to copy highlights to clipboard.');
+      return;
+    }
+    const label = payload.mode === 'pinned' ? 'Pinned highlights' : 'Highlights';
+    setStatus(`${label} copied to clipboard.`);
+  } catch (error) {
+    console.error(error);
+    setStatus('Unable to copy highlights to clipboard.');
+  }
+});
+
+studyStripDownloadButton?.addEventListener('click', () => {
+  const payload = getStudyStripExportPayload();
+  if (!payload) {
+    setStatus('No highlights available to export.');
+    return;
+  }
+  const markdown = formatStudyStripMarkdown(payload);
+  if (!markdown.trim()) {
+    setStatus('No highlights available to export.');
+    return;
+  }
+  const blob = new Blob([markdown], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'highlights.md';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const label = payload.mode === 'pinned' ? 'Pinned highlights' : 'Highlights';
+  setStatus(`${label} downloaded as highlights.md.`);
 });
 
 studyStripList?.addEventListener('click', (event) => {

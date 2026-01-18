@@ -146,7 +146,7 @@
       "title": "Implement Study Strip UI grouped by page with pin/unpin highlights",
       "priority": 2,
       "status": "done",
-      "updated_at": "2026-01-18T21:16:36Z",
+      "updated_at": "2026-01-18T21:17:10Z",
       "details": "Added Study Strip panel grouped by page with pin and unpin toggles.",
       "files": [
         "src/main.ts",
@@ -158,7 +158,14 @@
       "id": "T012",
       "title": "Add Study Strip export: copy to clipboard and download highlights.md",
       "priority": 2,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T21:22:24Z",
+      "details": "Added Study Strip export buttons for copy/download with markdown formatting and clipboard support.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T013",
