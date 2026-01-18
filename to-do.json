@@ -57,7 +57,7 @@
       "title": "Implement sentence segmentation utility with page/position metadata",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T18:56:17Z",
+      "updated_at": "2026-01-18T18:57:19Z",
       "details": "Added sentence segmentation utility with paragraph/sentence indices and offsets for PDF page text.",
       "files": [
         "src/main.ts",
@@ -69,7 +69,7 @@
       "title": "Render highlight overlay rectangles on PDF pages from sentence ranges",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T20:15:44Z",
+      "updated_at": "2026-01-18T20:17:38Z",
       "details": "Added PDF highlight overlay layer and rectangle mapping from sentence ranges to text items.",
       "files": [
         "src/main.ts",
@@ -82,11 +82,11 @@
       "title": "Integrate Transformers.js embeddings pipeline with WebGPU/WASM fallback",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T20:22:45Z",
+      "updated_at": "2026-01-18T20:24:46Z",
       "details": "Added Transformers.js feature-extraction pipeline with WebGPU/WASM fallback and page 1 embedding prep.",
       "files": [
-        "src/main.ts",
         "package.json",
+        "src/main.ts",
         "to-do.json"
       ]
     },
@@ -94,13 +94,25 @@
       "id": "T007",
       "title": "Implement embedding pooling, normalization, and cosine similarity helpers",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T20:42:49Z",
+      "details": "Added mean pooling, attention-mask handling, L2 normalization, and cosine similarity helpers; embeddings now pool per sentence.",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T008",
       "title": "Implement auto-highlight scoring (centrality/globality/priors) and MMR selection",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T20:53:21Z",
+      "details": "Implemented auto-highlight scoring with centrality/globality priors, length/position boosts, and MMR-based selection.",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T009",

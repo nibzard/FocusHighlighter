@@ -137,10 +137,21 @@ type SentenceSegmenterConstructor = new (
 
 type EmbeddingDevice = 'webgpu' | 'wasm';
 
-type EmbeddingPipeline = (
+type EmbeddingTokenizerOutput = {
+  attention_mask?: unknown;
+};
+
+type EmbeddingTokenizer = (
   inputs: string[] | string,
   options?: Record<string, unknown>,
-) => Promise<unknown>;
+) => Promise<EmbeddingTokenizerOutput>;
+
+type EmbeddingPipeline = ((
+  inputs: string[] | string,
+  options?: Record<string, unknown>,
+) => Promise<unknown>) & {
+  tokenizer?: EmbeddingTokenizer;
+};
 
 type TransformersModule = {
   pipeline: (task: string, model?: string, options?: Record<string, unknown>) => Promise<EmbeddingPipeline>;
@@ -160,11 +171,13 @@ const embeddingModelId = 'Xenova/multilingual-e5-small';
 
 let currentPageTextMap: PageTextMap | null = null;
 let currentPageSentences: SentenceSegment[] = [];
-const maxHighlightSentences = 4;
+const maxHighlightSentences = 6;
+const highlightMmrLambda = 0.35;
 let embeddingPipelinePromise: Promise<EmbeddingPipeline> | null = null;
 let embeddingBackend: EmbeddingDevice | null = null;
 let embeddingRequestId = 0;
-let currentPageEmbeddings: unknown | null = null;
+let currentPageEmbeddings: Float32Array[] | null = null;
+let currentPageHighlightSentences: SentenceSegment[] = [];
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -245,6 +258,272 @@ const getEmbeddingPipeline = async () => {
 const prepareEmbeddingInputs = (sentences: SentenceSegment[]) =>
   sentences.map((sentence) => `passage: ${sentence.text}`);
 
+type TensorLike = {
+  data: ArrayLike<number>;
+  dims: number[];
+};
+
+type TokenEmbeddingBatch = {
+  data: Float32Array;
+  batchSize: number;
+  sequenceLength: number;
+  hiddenSize: number;
+};
+
+const isNumberArrayLike = (value: unknown): value is ArrayLike<number> => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  if (!('length' in (value as { length?: unknown }))) {
+    return false;
+  }
+  return Array.isArray(value) || ArrayBuffer.isView(value);
+};
+
+const toFloat32Array = (value: ArrayLike<number>) =>
+  value instanceof Float32Array ? value : Float32Array.from(value, (entry) => Number(entry));
+
+const isTensorLike = (value: unknown): value is TensorLike => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const record = value as { data?: unknown; dims?: unknown };
+  if (!isNumberArrayLike(record.data)) {
+    return false;
+  }
+  if (!Array.isArray(record.dims) || !record.dims.every((dim) => Number.isFinite(dim))) {
+    return false;
+  }
+  return true;
+};
+
+const extractTokenEmbeddings = (value: unknown): TokenEmbeddingBatch | null => {
+  if (isTensorLike(value)) {
+    const dims = value.dims;
+    if (dims.length === 3) {
+      const [batchSize, sequenceLength, hiddenSize] = dims;
+      if (!batchSize || !sequenceLength || !hiddenSize) {
+        return null;
+      }
+      return { data: toFloat32Array(value.data), batchSize, sequenceLength, hiddenSize };
+    }
+    if (dims.length === 2) {
+      const [sequenceLength, hiddenSize] = dims;
+      if (!sequenceLength || !hiddenSize) {
+        return null;
+      }
+      return { data: toFloat32Array(value.data), batchSize: 1, sequenceLength, hiddenSize };
+    }
+    return null;
+  }
+
+  if (Array.isArray(value) && value.length > 0) {
+    const first = value[0];
+    if (Array.isArray(first) && first.length > 0) {
+      const second = (first as unknown[])[0];
+      if (Array.isArray(second)) {
+        const batchSize = value.length;
+        const sequenceLength = (first as unknown[]).length;
+        const hiddenSize = (second as unknown[]).length;
+        if (!batchSize || !sequenceLength || !hiddenSize) {
+          return null;
+        }
+        const data = new Float32Array(batchSize * sequenceLength * hiddenSize);
+        let offset = 0;
+        for (const sentence of value as number[][][]) {
+          for (const token of sentence) {
+            for (const entry of token) {
+              data[offset] = entry;
+              offset += 1;
+            }
+          }
+        }
+        return { data, batchSize, sequenceLength, hiddenSize };
+      }
+      if (typeof second === 'number') {
+        const sequenceLength = (value as number[][]).length;
+        const hiddenSize = (first as number[]).length;
+        if (!sequenceLength || !hiddenSize) {
+          return null;
+        }
+        const data = new Float32Array(sequenceLength * hiddenSize);
+        let offset = 0;
+        for (const token of value as number[][]) {
+          for (const entry of token) {
+            data[offset] = entry;
+            offset += 1;
+          }
+        }
+        return { data, batchSize: 1, sequenceLength, hiddenSize };
+      }
+    }
+  }
+
+  return null;
+};
+
+const normalizeAttentionMask = (
+  mask: unknown,
+  batchSize: number,
+  sequenceLength: number,
+): number[][] | null => {
+  if (!mask) {
+    return null;
+  }
+
+  let rows: ArrayLike<number>[] | null = null;
+
+  if (Array.isArray(mask)) {
+    if (mask.length === 0) {
+      return null;
+    }
+    const first = mask[0];
+    if (Array.isArray(first) || ArrayBuffer.isView(first)) {
+      rows = mask as ArrayLike<number>[];
+    } else if (typeof first === 'number') {
+      rows = [mask as ArrayLike<number>];
+    }
+  } else if (isNumberArrayLike(mask)) {
+    rows = [mask];
+  }
+
+  if (!rows) {
+    return null;
+  }
+
+  const normalized = rows.map((row) => {
+    const values = Array.from(row, (entry) => Number(entry));
+    if (values.length === sequenceLength) {
+      return values;
+    }
+    if (values.length > sequenceLength) {
+      return values.slice(0, sequenceLength);
+    }
+    return values.concat(Array(sequenceLength - values.length).fill(0));
+  });
+
+  if (!normalized.length) {
+    return null;
+  }
+  if (normalized.length === 1 && batchSize > 1) {
+    return Array.from({ length: batchSize }, () => normalized[0]);
+  }
+  if (normalized.length !== batchSize) {
+    return null;
+  }
+  return normalized;
+};
+
+const getAttentionMask = async (
+  extractor: EmbeddingPipeline,
+  inputs: string[],
+  batchSize: number,
+  sequenceLength: number,
+) => {
+  if (typeof extractor.tokenizer !== 'function') {
+    return null;
+  }
+
+  try {
+    const tokenized = await extractor.tokenizer(inputs, { padding: true, truncation: true });
+    return normalizeAttentionMask(tokenized.attention_mask, batchSize, sequenceLength);
+  } catch (error) {
+    console.debug('Unable to derive attention mask', error);
+    return null;
+  }
+};
+
+const meanPoolTokens = (
+  data: Float32Array,
+  tokenCount: number,
+  hiddenSize: number,
+  offset: number,
+  attentionMask?: number[],
+) => {
+  const pooled = new Float32Array(hiddenSize);
+  let activeTokens = 0;
+
+  for (let tokenIndex = 0; tokenIndex < tokenCount; tokenIndex += 1) {
+    const maskValue = attentionMask ? attentionMask[tokenIndex] : 1;
+    if (!maskValue) {
+      continue;
+    }
+    activeTokens += 1;
+    const base = offset + tokenIndex * hiddenSize;
+    for (let dim = 0; dim < hiddenSize; dim += 1) {
+      pooled[dim] += data[base + dim];
+    }
+  }
+
+  if (activeTokens === 0) {
+    return pooled;
+  }
+
+  const scale = 1 / activeTokens;
+  for (let dim = 0; dim < hiddenSize; dim += 1) {
+    pooled[dim] *= scale;
+  }
+  return pooled;
+};
+
+const l2NormalizeInPlace = (vector: Float32Array) => {
+  let sumSquares = 0;
+  for (const value of vector) {
+    sumSquares += value * value;
+  }
+
+  if (sumSquares === 0) {
+    return vector;
+  }
+
+  const inverseNorm = 1 / Math.sqrt(sumSquares);
+  for (let index = 0; index < vector.length; index += 1) {
+    vector[index] *= inverseNorm;
+  }
+  return vector;
+};
+
+const poolTokenEmbeddings = (
+  batch: TokenEmbeddingBatch,
+  attentionMask: number[][] | null,
+) => {
+  const { data, batchSize, sequenceLength, hiddenSize } = batch;
+  const pooled: Float32Array[] = [];
+
+  for (let batchIndex = 0; batchIndex < batchSize; batchIndex += 1) {
+    const offset = batchIndex * sequenceLength * hiddenSize;
+    const maskRow = attentionMask?.[batchIndex];
+    const pooledVector = meanPoolTokens(data, sequenceLength, hiddenSize, offset, maskRow);
+    pooled.push(l2NormalizeInPlace(pooledVector));
+  }
+
+  return pooled;
+};
+
+const cosineSimilarity = (a: ArrayLike<number>, b: ArrayLike<number>) => {
+  if (a.length !== b.length) {
+    return 0;
+  }
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let index = 0; index < a.length; index += 1) {
+    const valueA = a[index];
+    const valueB = b[index];
+    dot += valueA * valueB;
+    normA += valueA * valueA;
+    normB += valueB * valueB;
+  }
+
+  if (normA === 0 || normB === 0) {
+    return 0;
+  }
+
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+};
+
 const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: string) => {
   if (!sentences.length) {
     return;
@@ -260,10 +539,43 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
       return;
     }
     const inputs = prepareEmbeddingInputs(sentences);
-    currentPageEmbeddings = await extractor(inputs, { pooling: 'none' });
+    const tokenEmbeddings = await extractor(inputs, { pooling: 'none' });
+    if (requestId !== embeddingRequestId) {
+      return;
+    }
+
+    const tokenBatch = extractTokenEmbeddings(tokenEmbeddings);
+    if (!tokenBatch) {
+      setStatus(`${statusPrefix} Embeddings loaded but could not be parsed.`);
+      return;
+    }
+
+    const attentionMask = await getAttentionMask(
+      extractor,
+      inputs,
+      tokenBatch.batchSize,
+      tokenBatch.sequenceLength,
+    );
+    if (requestId !== embeddingRequestId) {
+      return;
+    }
+
+    const pooledEmbeddings = poolTokenEmbeddings(tokenBatch, attentionMask);
+    currentPageEmbeddings = pooledEmbeddings;
+    if (requestId !== embeddingRequestId) {
+      return;
+    }
+    updateAutoHighlights(currentPageSentences, currentPageEmbeddings);
+    const highlightStats = renderHighlights();
+    if (pooledEmbeddings.length > 1) {
+      console.debug(
+        'Embedding sample similarity',
+        cosineSimilarity(pooledEmbeddings[0], pooledEmbeddings[1]).toFixed(4),
+      );
+    }
     const activeDevice = embeddingBackend ?? preferredDevice;
     setStatus(
-      `${statusPrefix} Embeddings ready (${formatEmbeddingDeviceLabel(activeDevice)}) for ${sentences.length} sentences.`,
+      `${statusPrefix} Auto-highlighted ${highlightStats.sentences} sentences with embeddings (${formatEmbeddingDeviceLabel(activeDevice)}).`,
     );
   } catch (error) {
     if (requestId !== embeddingRequestId) {
@@ -299,6 +611,7 @@ const resetViewer = () => {
   currentPageTextMap = null;
   currentPageSentences = [];
   currentPageEmbeddings = null;
+  currentPageHighlightSentences = [];
   currentViewport = null;
   embeddingRequestId += 1;
   if (viewerStage) {
@@ -477,8 +790,173 @@ const segmentPageText = (pageTextMap: PageTextMap, pageNumber: number): Sentence
   return sentences;
 };
 
-const getSentenceHighlightCandidates = (sentences: SentenceSegment[]) =>
-  sentences.slice(0, Math.min(maxHighlightSentences, sentences.length));
+type ScoredSentence = {
+  sentence: SentenceSegment;
+  embedding: Float32Array;
+  score: number;
+};
+
+const getHighlightTargetCount = (sentenceCount: number) => {
+  if (sentenceCount <= 0) {
+    return 0;
+  }
+  const target = Math.min(maxHighlightSentences, Math.ceil(0.2 * sentenceCount));
+  if (sentenceCount >= 2) {
+    return Math.max(2, target);
+  }
+  return 1;
+};
+
+const computeCentroid = (embeddings: Float32Array[]) => {
+  if (!embeddings.length) {
+    return null;
+  }
+  const size = embeddings[0].length;
+  const centroid = new Float32Array(size);
+  for (const vector of embeddings) {
+    for (let index = 0; index < size; index += 1) {
+      centroid[index] += vector[index];
+    }
+  }
+  const scale = 1 / embeddings.length;
+  for (let index = 0; index < size; index += 1) {
+    centroid[index] *= scale;
+  }
+  return l2NormalizeInPlace(centroid);
+};
+
+const getPositionPrior = (sentenceIndex: number, sentenceCount: number) => {
+  if (sentenceCount <= 1) {
+    return 0.6;
+  }
+  const ratio = sentenceIndex / sentenceCount;
+  if (ratio <= 0.2) {
+    return 1;
+  }
+  if (ratio <= 0.6) {
+    return 0.6;
+  }
+  return 0.3;
+};
+
+const getLengthPrior = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  const visibleMatches = trimmed.match(/\S/gu);
+  const alphaMatches = trimmed.match(/[\p{L}\p{N}]/gu);
+  const visibleCount = visibleMatches ? visibleMatches.length : 0;
+  const alphaCount = alphaMatches ? alphaMatches.length : 0;
+  const density = visibleCount ? alphaCount / visibleCount : 0;
+
+  const length = trimmed.length;
+  let lengthScore = 0;
+  if (length < 20) {
+    lengthScore = 0;
+  } else if (length < 40) {
+    lengthScore = 0.3;
+  } else if (length < 80) {
+    lengthScore = 0.6;
+  } else {
+    lengthScore = 1;
+  }
+
+  let densityScore = 0.1;
+  if (density >= 0.6) {
+    densityScore = 1;
+  } else if (density >= 0.4) {
+    densityScore = 0.7;
+  } else if (density >= 0.25) {
+    densityScore = 0.4;
+  }
+
+  return lengthScore * densityScore;
+};
+
+const buildSentenceScores = (
+  sentences: SentenceSegment[],
+  embeddings: Float32Array[],
+) => {
+  const pageCentroid = computeCentroid(embeddings);
+  const docCentroid = pageCentroid;
+
+  return sentences.map((sentence, index) => {
+    const embedding = embeddings[index];
+    const centrality = pageCentroid ? cosineSimilarity(embedding, pageCentroid) : 0;
+    const globality = docCentroid ? cosineSimilarity(embedding, docCentroid) : 0;
+    const position = getPositionPrior(index, sentences.length);
+    const length = getLengthPrior(sentence.text);
+    const score = 0.65 * centrality + 0.25 * globality + 0.07 * position + 0.03 * length;
+    return { sentence, embedding, score };
+  });
+};
+
+const selectHighlightsWithMmr = (
+  candidates: ScoredSentence[],
+  targetCount: number,
+  lambda: number,
+) => {
+  const selected: ScoredSentence[] = [];
+  const remaining = candidates.slice();
+
+  while (selected.length < targetCount && remaining.length > 0) {
+    let bestIndex = 0;
+    let bestValue = -Infinity;
+
+    for (let index = 0; index < remaining.length; index += 1) {
+      const candidate = remaining[index];
+      let penalty = 0;
+      if (selected.length > 0) {
+        let maxSimilarity = -Infinity;
+        for (const picked of selected) {
+          const similarity = cosineSimilarity(candidate.embedding, picked.embedding);
+          if (similarity > maxSimilarity) {
+            maxSimilarity = similarity;
+          }
+        }
+        penalty = lambda * maxSimilarity;
+      }
+      const value = candidate.score - penalty;
+      if (value > bestValue) {
+        bestValue = value;
+        bestIndex = index;
+      }
+    }
+
+    selected.push(remaining[bestIndex]);
+    remaining.splice(bestIndex, 1);
+  }
+
+  return selected;
+};
+
+const updateAutoHighlights = (
+  sentences: SentenceSegment[],
+  embeddings: Float32Array[] | null,
+) => {
+  const targetCount = getHighlightTargetCount(sentences.length);
+  if (!targetCount) {
+    currentPageHighlightSentences = [];
+    return 0;
+  }
+
+  if (!embeddings || embeddings.length !== sentences.length) {
+    currentPageHighlightSentences = sentences.slice(0, targetCount);
+    return currentPageHighlightSentences.length;
+  }
+
+  const candidates = buildSentenceScores(sentences, embeddings).sort(
+    (a, b) => b.score - a.score,
+  );
+  const selected = selectHighlightsWithMmr(candidates, targetCount, highlightMmrLambda).map(
+    (entry) => entry.sentence,
+  );
+  currentPageHighlightSentences =
+    selected.length > 0 ? selected : sentences.slice(0, targetCount);
+  return currentPageHighlightSentences.length;
+};
 
 const rangesOverlap = (startA: number, endA: number, startB: number, endB: number) =>
   endA > startB && startA < endB;
@@ -512,7 +990,11 @@ const renderHighlights = () => {
     return { sentences: 0, rects: 0 };
   }
 
-  const highlightSentences = getSentenceHighlightCandidates(currentPageSentences);
+  const fallbackCount = getHighlightTargetCount(currentPageSentences.length);
+  const highlightSentences =
+    currentPageHighlightSentences.length > 0
+      ? currentPageHighlightSentences
+      : currentPageSentences.slice(0, fallbackCount);
   if (!highlightSentences.length) {
     highlightLayer.innerHTML = '';
     return { sentences: 0, rects: 0 };
@@ -612,9 +1094,10 @@ const loadPdf = async (file: File) => {
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
+    updateAutoHighlights(currentPageSentences, null);
     const highlightStats = renderHighlights();
-    const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences, highlighted ${highlightStats.sentences} sentences.`;
-    setStatus(statusPrefix);
+    const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences.`;
+    setStatus(`${statusPrefix} Highlighted ${highlightStats.sentences} sentences.`);
     void runPageEmbeddings(currentPageSentences, statusPrefix);
   } catch (error) {
     console.error(error);
