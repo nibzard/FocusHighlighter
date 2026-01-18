@@ -237,7 +237,14 @@
       "id": "T018",
       "title": "Add question highlight mode with query embedding and top-K selection",
       "priority": 4,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T23:33:38Z",
+      "details": "Added question highlight mode with query embedding and top-K selection.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T019",

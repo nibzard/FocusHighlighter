@@ -330,6 +330,29 @@ select:focus-visible,
   gap: 8px;
 }
 
+.question-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.question-input {
+  flex: 1 1 220px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 0.92rem;
+  font-family: inherit;
+  color: var(--ink);
+}
+
+.question-input:focus {
+  outline: 2px solid rgba(224, 122, 46, 0.2);
+  border-color: var(--accent);
+}
+
 .control-label {
   margin: 0;
   font-size: 0.7rem;

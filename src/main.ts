@@ -110,13 +110,26 @@ app.innerHTML = `
                 type="button"
                 data-highlight-mode="question"
                 aria-pressed="false"
-                aria-disabled="true"
-                disabled
               >
                 Question
               </button>
             </div>
-            <p id="mode-note" class="muted control-note">Question mode is coming soon.</p>
+            <p id="mode-note" class="muted control-note">Auto mode selects key sentences.</p>
+          </div>
+          <div class="control-group question-group" id="question-group" hidden>
+            <label class="control-label" for="question-input">Question</label>
+            <div class="question-row">
+              <input
+                id="question-input"
+                class="question-input"
+                type="text"
+                placeholder="What should I focus on?"
+                autocomplete="off"
+                aria-describedby="question-note"
+              />
+              <button id="question-apply" class="secondary-button" type="button">Highlight</button>
+            </div>
+            <p id="question-note" class="muted control-note">Ask a question to highlight answers.</p>
           </div>
           <div class="control-group">
             <p class="control-label">Intensity</p>
@@ -274,6 +287,10 @@ const highlightModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-highlight-mode]'),
 );
 const highlightModeNote = document.querySelector<HTMLParagraphElement>('#mode-note');
+const questionGroup = document.querySelector<HTMLDivElement>('#question-group');
+const questionInput = document.querySelector<HTMLInputElement>('#question-input');
+const questionButton = document.querySelector<HTMLButtonElement>('#question-apply');
+const questionNote = document.querySelector<HTMLParagraphElement>('#question-note');
 const highlightIntensityButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-highlight-intensity]'),
 );
@@ -306,6 +323,7 @@ type IndexedPage =
       textMap: PageTextMap;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
+      questionHighlights?: SentenceSegment[];
       embeddings: Float32Array[] | null;
     }
   | {
@@ -313,6 +331,7 @@ type IndexedPage =
       pageNumber: number;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
+      questionHighlights?: SentenceSegment[];
       embeddings: Float32Array[] | null;
     };
 
@@ -512,6 +531,9 @@ let currentHighlightIntensity: HighlightIntensity = 'default';
 let currentHighlightMode: HighlightMode = 'auto';
 let currentViewMode: ViewerMode = 'preview';
 const highlightMmrLambda = 0.35;
+let currentQuestionQuery: string | null = null;
+let currentQuestionEmbedding: Float32Array | null = null;
+let questionRequestId = 0;
 let embeddingPipelinePromise: Promise<EmbeddingPipeline> | null = null;
 let embeddingBackend: EmbeddingDevice | null = null;
 let embeddingWorker: Worker | null = null;
@@ -774,8 +796,8 @@ const shouldUseEmbeddingWorker = (allowWorker: boolean, sentenceCount: number) =
   return Boolean(getEmbeddingWorker());
 };
 
-const prepareEmbeddingInputs = (sentences: SentenceSegment[]) =>
-  sentences.map((sentence) => `passage: ${sentence.text}`);
+const prepareEmbeddingInputs = (sentences: SentenceSegment[], prefix: string = 'passage') =>
+  sentences.map((sentence) => `${prefix}: ${sentence.text}`);
 
 type TensorLike = {
   data: ArrayLike<number>;
@@ -1019,15 +1041,14 @@ const poolTokenEmbeddings = (
   return pooled;
 };
 
-const computeEmbeddingsForSentences = async (
-  sentences: SentenceSegment[],
+const computeEmbeddingsForInputs = async (
+  inputs: string[],
   options: { allowWorker?: boolean } = {},
 ) => {
-  if (!sentences.length) {
+  if (!inputs.length) {
     return null;
   }
 
-  const inputs = prepareEmbeddingInputs(sentences);
   const preferredDevice = getEmbeddingDevice();
   const batchSize = getEmbeddingBatchSize(preferredDevice, inputs.length);
   const workerDevice = preferredDevice === 'webgpu' ? 'wasm' : preferredDevice;
@@ -1066,6 +1087,18 @@ const computeEmbeddingsForSentences = async (
   }
 
   return pooledEmbeddings;
+};
+
+const computeEmbeddingsForSentences = async (
+  sentences: SentenceSegment[],
+  options: { allowWorker?: boolean; inputPrefix?: string } = {},
+) => {
+  if (!sentences.length) {
+    return null;
+  }
+
+  const inputs = prepareEmbeddingInputs(sentences, options.inputPrefix ?? 'passage');
+  return computeEmbeddingsForInputs(inputs, options);
 };
 
 const cosineSimilarity = (a: ArrayLike<number>, b: ArrayLike<number>) => {
@@ -1112,7 +1145,14 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
     }
 
     currentPageEmbeddings = pooledEmbeddings;
-    updateAutoHighlights(currentPageSentences, currentPageEmbeddings);
+    const autoHighlights = updateAutoHighlights(currentPageSentences, currentPageEmbeddings);
+    const questionHighlights =
+      currentQuestionEmbedding && currentQuestionQuery
+        ? selectQuestionHighlights(currentPageSentences, currentPageEmbeddings, currentQuestionEmbedding)
+        : [];
+    if (currentHighlightMode === 'question') {
+      currentPageHighlightSentences = questionHighlights;
+    }
     const highlightStats = renderHighlights();
     if (pooledEmbeddings.length > 1) {
       console.debug(
@@ -1125,7 +1165,8 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
       if (existing) {
         indexedPages.set(currentPage.pageNumber, {
           ...existing,
-          highlights: currentPageHighlightSentences,
+          highlights: autoHighlights,
+          questionHighlights,
           embeddings: currentPageEmbeddings,
         });
       }
@@ -1300,6 +1341,15 @@ const resetViewer = () => {
   currentPageSentences = [];
   currentPageEmbeddings = null;
   currentPageHighlightSentences = [];
+  questionRequestId += 1;
+  currentQuestionQuery = null;
+  currentQuestionEmbedding = null;
+  if (questionInput) {
+    questionInput.value = '';
+  }
+  if (questionButton) {
+    questionButton.disabled = false;
+  }
   currentViewport = null;
   pdfBytes = null;
   currentFileName = null;
@@ -1332,6 +1382,7 @@ const resetViewer = () => {
   setPageIndicator(1, null);
   pinnedHighlightIds.clear();
   renderStudyStrip();
+  updateHighlightModeControls();
 };
 
 type RgbColor = {
@@ -2131,13 +2182,19 @@ const indexDocxPage = async (
   }
 
   const highlights = selectAutoHighlights(effectiveSentences, embeddings);
-  renderDocxPageHighlights(page, textMap, highlights);
+  const questionHighlights =
+    currentQuestionEmbedding && currentQuestionQuery
+      ? selectQuestionHighlights(effectiveSentences, embeddings, currentQuestionEmbedding)
+      : [];
+  const activeHighlights = currentHighlightMode === 'question' ? questionHighlights : highlights;
+  renderDocxPageHighlights(page, textMap, activeHighlights);
   registerAutoSentenceCount(effectiveSentences.length);
   return {
     source: sourceKind,
     pageNumber: page.pageNumber,
     sentences: effectiveSentences,
     highlights,
+    questionHighlights,
     embeddings,
   };
 };
@@ -2735,12 +2792,49 @@ const selectAutoHighlights = (
   return selected.length > 0 ? selected : sentences.slice(0, targetCount);
 };
 
+const normalizeQuestionInput = (value: string) => value.trim().replace(/\s+/g, ' ');
+
+const computeQueryEmbedding = async (question: string) => {
+  const normalized = normalizeQuestionInput(question);
+  if (!normalized) {
+    return null;
+  }
+  const embeddings = await computeEmbeddingsForInputs([`query: ${normalized}`], { allowWorker: false });
+  return embeddings?.[0] ?? null;
+};
+
+const selectQuestionHighlights = (
+  sentences: SentenceSegment[],
+  embeddings: Float32Array[] | null,
+  queryEmbedding: Float32Array | null,
+) => {
+  const targetCount = getHighlightTargetCount(sentences.length);
+  if (!targetCount || !queryEmbedding) {
+    return [];
+  }
+  if (!embeddings || embeddings.length !== sentences.length) {
+    return [];
+  }
+
+  const scored = sentences
+    .map((sentence, index) => ({
+      sentence,
+      score: cosineSimilarity(embeddings[index], queryEmbedding),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, targetCount).map((entry) => entry.sentence);
+};
+
 const updateAutoHighlights = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
 ) => {
-  currentPageHighlightSentences = selectAutoHighlights(sentences, embeddings);
-  return currentPageHighlightSentences.length;
+  const highlights = selectAutoHighlights(sentences, embeddings);
+  if (currentHighlightMode === 'auto') {
+    currentPageHighlightSentences = highlights;
+  }
+  return highlights;
 };
 
 const rangesOverlap = (startA: number, endA: number, startB: number, endB: number) =>
@@ -2815,7 +2909,9 @@ const renderHighlights = () => {
   const highlightSentences =
     currentPageHighlightSentences.length > 0
       ? currentPageHighlightSentences
-      : currentPageSentences.slice(0, fallbackCount);
+      : currentHighlightMode === 'question'
+        ? []
+        : currentPageSentences.slice(0, fallbackCount);
   if (!highlightSentences.length) {
     highlightLayer.innerHTML = '';
     return { sentences: 0, rects: 0 };
@@ -2854,7 +2950,7 @@ const renderHighlights = () => {
   return { sentences: highlightSentences.length, rects: rectCount };
 };
 
-const getPageHighlightSentences = (entry: IndexedPage) => {
+const getAutoHighlightsForEntry = (entry: IndexedPage) => {
   if (entry.highlights && entry.highlights.length > 0) {
     return entry.highlights;
   }
@@ -2863,6 +2959,16 @@ const getPageHighlightSentences = (entry: IndexedPage) => {
     return [];
   }
   return entry.sentences.slice(0, fallbackCount);
+};
+
+const getActiveHighlightsForEntry = (entry: IndexedPage) => {
+  if (currentHighlightMode === 'question') {
+    if (!currentQuestionEmbedding || !currentQuestionQuery) {
+      return [];
+    }
+    return entry.questionHighlights ?? [];
+  }
+  return getAutoHighlightsForEntry(entry);
 };
 
 const sortHighlightsByPosition = (a: SentenceSegment, b: SentenceSegment) => {
@@ -2880,7 +2986,7 @@ const buildStudyStripSections = () =>
     .sort((a, b) => a.pageNumber - b.pageNumber)
     .map((entry) => ({
       pageNumber: entry.pageNumber,
-      highlights: getPageHighlightSentences(entry).slice().sort(sortHighlightsByPosition),
+      highlights: getActiveHighlightsForEntry(entry).slice().sort(sortHighlightsByPosition),
     }))
     .filter((section) => section.highlights.length > 0);
 
@@ -3008,7 +3114,9 @@ const getHighlightListState = (pageNumber: number | null) => {
     const highlights =
       currentPageHighlightSentences.length > 0
         ? currentPageHighlightSentences
-        : currentPageSentences.slice(0, fallbackCount);
+        : currentHighlightMode === 'question'
+          ? []
+          : currentPageSentences.slice(0, fallbackCount);
     return { highlights, ready: true };
   }
 
@@ -3017,7 +3125,7 @@ const getHighlightListState = (pageNumber: number | null) => {
     return { highlights: [] as SentenceSegment[], ready: false };
   }
 
-  return { highlights: getPageHighlightSentences(entry), ready: true };
+  return { highlights: getActiveHighlightsForEntry(entry), ready: true };
 };
 
 const renderHighlightListView = () => {
@@ -3206,6 +3314,182 @@ const renderStudyStrip = () => {
   }
 };
 
+const renderDocxHighlightsForMode = () => {
+  if (!docxPages.length) {
+    return;
+  }
+  const shouldUpdateDocx =
+    currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text';
+  if (!shouldUpdateDocx) {
+    return;
+  }
+
+  for (const page of docxPages) {
+    const entry = indexedPages.get(page.pageNumber);
+    if (!entry || entry.source === 'pdf') {
+      continue;
+    }
+    clearDocxHighlights(page);
+    const textMap = buildDocxPageTextMap(page.content);
+    const highlights = getActiveHighlightsForEntry(entry);
+    renderDocxPageHighlights(page, textMap, highlights);
+  }
+};
+
+const applyHighlightMode = () => {
+  if (currentSourceKind === 'pdf') {
+    if (currentPage) {
+      const entry = indexedPages.get(currentPage.pageNumber);
+      if (entry) {
+        currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
+      } else if (currentHighlightMode === 'auto') {
+        currentPageHighlightSentences = selectAutoHighlights(
+          currentPageSentences,
+          currentPageEmbeddings,
+        );
+      } else {
+        currentPageHighlightSentences = [];
+      }
+      renderHighlights();
+    }
+  } else {
+    renderDocxHighlightsForMode();
+  }
+
+  renderStudyStrip();
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
+};
+
+const clearQuestionHighlights = () => {
+  questionRequestId += 1;
+  currentQuestionQuery = null;
+  currentQuestionEmbedding = null;
+  for (const entry of indexedPages.values()) {
+    entry.questionHighlights = [];
+  }
+};
+
+const updateQuestionHighlightsForPages = async (
+  queryEmbedding: Float32Array,
+  requestId: number,
+) => {
+  const entries = Array.from(indexedPages.values()).sort((a, b) => a.pageNumber - b.pageNumber);
+  if (entries.length === 0) {
+    return;
+  }
+
+  for (let index = 0; index < entries.length; index += 1) {
+    if (requestId !== questionRequestId) {
+      return;
+    }
+    const entry = entries[index];
+    if (!entry.sentences.length) {
+      entry.questionHighlights = [];
+      continue;
+    }
+
+    let embeddings = entry.embeddings;
+    if (!embeddings || embeddings.length !== entry.sentences.length) {
+      try {
+        embeddings = await computeEmbeddingsForSentences(entry.sentences, { allowWorker: true });
+      } catch (error) {
+        console.debug('Embedding failed for question mode page', entry.pageNumber, error);
+      }
+      if (requestId !== questionRequestId) {
+        return;
+      }
+      if (embeddings) {
+        entry.embeddings = embeddings;
+        if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
+          currentPageEmbeddings = embeddings;
+        }
+      }
+    }
+
+    entry.questionHighlights = selectQuestionHighlights(entry.sentences, embeddings ?? null, queryEmbedding);
+    if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
+      currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
+    }
+
+    if (index % 2 === 1) {
+      await yieldToUi();
+    }
+  }
+
+  if (currentSourceKind === 'pdf') {
+    renderHighlights();
+  } else {
+    renderDocxHighlightsForMode();
+  }
+  renderStudyStrip();
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
+};
+
+const applyQuestionHighlight = async () => {
+  if (!questionInput) {
+    return;
+  }
+
+  const normalized = normalizeQuestionInput(questionInput.value);
+  if (!normalized) {
+    clearQuestionHighlights();
+    if (questionButton) {
+      questionButton.disabled = false;
+    }
+    updateHighlightModeControls();
+    applyHighlightMode();
+    return;
+  }
+
+  questionInput.value = normalized;
+  const requestId = (questionRequestId += 1);
+  currentQuestionQuery = normalized;
+  if (questionButton) {
+    questionButton.disabled = true;
+  }
+  if (currentHighlightMode !== 'question') {
+    setHighlightMode('question');
+  } else {
+    updateHighlightModeControls();
+    applyHighlightMode();
+  }
+
+  try {
+    setStatus(`Highlighting answers for "${normalized}"...`);
+    const queryEmbedding = await computeQueryEmbedding(normalized);
+    if (requestId !== questionRequestId) {
+      return;
+    }
+    if (!queryEmbedding) {
+      currentQuestionEmbedding = null;
+      setStatus('Unable to compute question embedding.');
+      updateHighlightModeControls();
+      return;
+    }
+    currentQuestionEmbedding = queryEmbedding;
+    await updateQuestionHighlightsForPages(queryEmbedding, requestId);
+    if (requestId !== questionRequestId) {
+      return;
+    }
+    setStatus(`Question highlights ready for "${normalized}".`);
+    updateHighlightModeControls();
+  } catch (error) {
+    if (requestId !== questionRequestId) {
+      return;
+    }
+    console.error(error);
+    setStatus('Unable to highlight answers for that question.');
+  } finally {
+    if (requestId === questionRequestId && questionButton) {
+      questionButton.disabled = false;
+    }
+  }
+};
+
 const updateHighlightModeControls = () => {
   highlightModeButtons.forEach((button) => {
     const mode = button.dataset.highlightMode as HighlightMode | undefined;
@@ -3215,7 +3499,25 @@ const updateHighlightModeControls = () => {
     button.setAttribute('aria-pressed', mode === currentHighlightMode ? 'true' : 'false');
   });
   if (highlightModeNote) {
-    highlightModeNote.textContent = 'Auto mode selects key sentences. Question mode is coming soon.';
+    if (currentHighlightMode === 'question') {
+      highlightModeNote.textContent = currentQuestionQuery
+        ? `Question mode highlighting: "${currentQuestionQuery}".`
+        : 'Question mode highlights answers to your prompt.';
+    } else {
+      highlightModeNote.textContent = 'Auto mode selects key sentences. Switch to Question to highlight answers.';
+    }
+  }
+  if (questionGroup) {
+    questionGroup.hidden = currentHighlightMode !== 'question';
+  }
+  if (questionNote) {
+    if (currentHighlightMode !== 'question') {
+      questionNote.textContent = 'Switch to Question mode to highlight answers.';
+    } else if (currentQuestionQuery) {
+      questionNote.textContent = `Showing answers for "${currentQuestionQuery}".`;
+    } else {
+      questionNote.textContent = 'Enter a question to highlight answers.';
+    }
   }
 };
 
@@ -3225,6 +3527,10 @@ const setHighlightMode = (mode: HighlightMode) => {
   }
   currentHighlightMode = mode;
   updateHighlightModeControls();
+  applyHighlightMode();
+  if (currentHighlightMode === 'question' && questionInput) {
+    questionInput.focus();
+  }
 };
 
 const updateHighlightIntensityControls = () => {
@@ -3253,11 +3559,21 @@ const applyHighlightIntensity = () => {
 
   for (const entry of indexedPages.values()) {
     const embeddings = entry.embeddings ?? null;
-    const highlights = selectAutoHighlights(entry.sentences, embeddings);
-    entry.highlights = highlights;
+    entry.highlights = selectAutoHighlights(entry.sentences, embeddings);
 
+    if (currentQuestionEmbedding && currentQuestionQuery) {
+      entry.questionHighlights = selectQuestionHighlights(
+        entry.sentences,
+        embeddings,
+        currentQuestionEmbedding,
+      );
+    } else {
+      entry.questionHighlights = [];
+    }
+
+    const activeHighlights = getActiveHighlightsForEntry(entry);
     if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
-      currentPageHighlightSentences = highlights;
+      currentPageHighlightSentences = activeHighlights;
     }
 
     if (docxPagesByNumber && entry.source !== 'pdf') {
@@ -3267,7 +3583,7 @@ const applyHighlightIntensity = () => {
       }
       clearDocxHighlights(page);
       const textMap = buildDocxPageTextMap(page.content);
-      renderDocxPageHighlights(page, textMap, highlights);
+      renderDocxPageHighlights(page, textMap, activeHighlights);
     }
   }
 
@@ -3474,7 +3790,7 @@ const exportHighlightedPdf = async () => {
       }
       const pdfjsPage = await pdfDoc.getPage(entry.pageNumber);
       const viewport = pdfjsPage.getViewport({ scale: 1 });
-      const highlightSentences = getPageHighlightSentences(entry);
+      const highlightSentences = getActiveHighlightsForEntry(entry);
       if (highlightSentences.length === 0) {
         continue;
       }
@@ -3550,6 +3866,10 @@ const indexPdfPage = async (
   }
 
   const highlights = selectAutoHighlights(effectiveSentences, embeddings);
+  const questionHighlights =
+    currentQuestionEmbedding && currentQuestionQuery
+      ? selectQuestionHighlights(effectiveSentences, embeddings, currentQuestionEmbedding)
+      : [];
   registerAutoSentenceCount(effectiveSentences.length);
   return {
     source: 'pdf',
@@ -3557,6 +3877,7 @@ const indexPdfPage = async (
     textMap,
     sentences: effectiveSentences,
     highlights,
+    questionHighlights,
     embeddings,
   };
 };
@@ -3708,7 +4029,20 @@ const goToPdfPage = async (pageNumber: number) => {
     currentPageTextMap = cached.textMap;
     currentPageSentences = cached.sentences;
     currentPageEmbeddings = cached.embeddings;
-    currentPageHighlightSentences = cached.highlights;
+    if (
+      currentHighlightMode === 'question' &&
+      currentQuestionEmbedding &&
+      currentQuestionQuery &&
+      cached.embeddings &&
+      (!cached.questionHighlights || cached.questionHighlights.length === 0)
+    ) {
+      cached.questionHighlights = selectQuestionHighlights(
+        cached.sentences,
+        cached.embeddings,
+        currentQuestionEmbedding,
+      );
+    }
+    currentPageHighlightSentences = getActiveHighlightsForEntry(cached);
     updatePdfScanWarning(currentPageTextMap);
   } else {
     currentPageTextMap = await extractPageTextMap(page);
@@ -3718,15 +4052,18 @@ const goToPdfPage = async (pageNumber: number) => {
     updatePdfScanWarning(currentPageTextMap);
     currentPageSentences = segmentPageText(currentPageTextMap, clamped);
     currentPageEmbeddings = null;
-    updateAutoHighlights(currentPageSentences, null);
-    indexedPages.set(clamped, {
+    const autoHighlights = updateAutoHighlights(currentPageSentences, null);
+    const entry: IndexedPage = {
       source: 'pdf',
       pageNumber: clamped,
       textMap: currentPageTextMap,
       sentences: currentPageSentences,
-      highlights: currentPageHighlightSentences,
+      highlights: autoHighlights,
+      questionHighlights: [],
       embeddings: null,
-    });
+    };
+    indexedPages.set(clamped, entry);
+    currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
   }
 
   const highlightStats = renderHighlights();
@@ -3774,15 +4111,18 @@ const loadPdf = async (file: File) => {
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     const capped = clampSentencesForAutoIndexing(currentPageSentences);
     currentPageSentences = capped.sentences;
-    updateAutoHighlights(currentPageSentences, null);
-    indexedPages.set(currentPage.pageNumber, {
+    const autoHighlights = updateAutoHighlights(currentPageSentences, null);
+    const entry: IndexedPage = {
       source: 'pdf',
       pageNumber: currentPage.pageNumber,
       textMap: currentPageTextMap,
       sentences: currentPageSentences,
-      highlights: currentPageHighlightSentences,
+      highlights: autoHighlights,
+      questionHighlights: [],
       embeddings: null,
-    });
+    };
+    indexedPages.set(currentPage.pageNumber, entry);
+    currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
     registerAutoSentenceCount(currentPageSentences.length);
     setExportEnabled(true);
     const highlightStats = renderHighlights();
@@ -3958,6 +4298,18 @@ textInput?.addEventListener('keydown', (event) => {
   }
   event.preventDefault();
   void loadText(textInput.value);
+});
+
+questionButton?.addEventListener('click', () => {
+  void applyQuestionHighlight();
+});
+
+questionInput?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  event.preventDefault();
+  void applyQuestionHighlight();
 });
 
 bindDropzone(pdfDropzone, (file) => {
