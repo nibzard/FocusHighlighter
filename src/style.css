@@ -108,6 +108,11 @@ body {
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
+.upload-options {
+  display: grid;
+  gap: 12px;
+}
+
 .dropzone input {
   display: none;
 }
@@ -168,6 +173,11 @@ body {
   position: relative;
 }
 
+.viewer-stage.is-docx {
+  align-items: stretch;
+  text-align: left;
+}
+
 .viewer-stage.is-ready {
   border-style: solid;
   background: #fffaf2;
@@ -190,6 +200,45 @@ body {
   box-shadow: 0 12px 30px -24px rgba(30, 22, 12, 0.5);
 }
 
+.docx-viewer {
+  display: none;
+  width: min(100%, 680px);
+  max-height: 520px;
+  overflow: auto;
+  padding: 18px 22px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px -24px rgba(30, 22, 12, 0.5);
+  line-height: 1.6;
+}
+
+.docx-viewer h1,
+.docx-viewer h2,
+.docx-viewer h3,
+.docx-viewer h4 {
+  font-family: "Fraunces", "Times New Roman", serif;
+  margin: 0.8em 0 0.35em;
+}
+
+.docx-viewer p {
+  margin: 0 0 0.9em;
+}
+
+.docx-viewer ul,
+.docx-viewer ol {
+  margin: 0 0 0.9em;
+  padding-left: 1.25rem;
+}
+
+.docx-viewer li + li {
+  margin-top: 0.35em;
+}
+
+.docx-viewer a {
+  color: var(--accent-strong);
+}
+
 .highlight-layer {
   position: absolute;
   inset: 0;
@@ -205,6 +254,14 @@ body {
 
 .viewer-stage.is-ready .pdf-stack {
   display: inline-block;
+}
+
+.viewer-stage.is-docx .pdf-stack {
+  display: none;
+}
+
+.viewer-stage.is-docx .docx-viewer {
+  display: block;
 }
 
 .viewer-stage.is-ready .viewer-placeholder {

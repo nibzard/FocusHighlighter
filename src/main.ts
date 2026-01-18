@@ -13,45 +13,57 @@ app.innerHTML = `
   <main class="shell">
     <header class="hero">
       <p class="eyebrow">FocusHighlighter</p>
-      <h1>Drop a PDF. See page 1 instantly.</h1>
+      <h1>Drop a PDF or Word doc. See page 1 instantly.</h1>
       <p class="lede">
-        Upload a PDF to render page 1 with PDF.js. Highlights arrive next.
+        Upload a PDF to render page 1 with highlights, or open a DOCX for a clean reading view.
       </p>
     </header>
     <section class="stage">
       <article class="upload-card">
         <div>
-          <h2>PDF upload</h2>
+          <h2>Document upload</h2>
           <p class="muted">
-            Start with a local PDF. We render page 1 on the spot to prove the pipeline.
+            PDFs render page 1 with highlights. DOCX files open a sanitized reading view.
           </p>
         </div>
-        <label class="dropzone" for="pdf-input">
-          <input id="pdf-input" type="file" accept="application/pdf" />
-          <span class="dropzone-title">Choose a PDF</span>
-          <span class="dropzone-subtitle">or drag & drop here</span>
-        </label>
+        <div class="upload-options">
+          <label class="dropzone" id="pdf-dropzone" for="pdf-input">
+            <input id="pdf-input" type="file" accept="application/pdf" />
+            <span class="dropzone-title">Choose a PDF</span>
+            <span class="dropzone-subtitle">or drag & drop here</span>
+          </label>
+          <label class="dropzone" id="docx-dropzone" for="docx-input">
+            <input
+              id="docx-input"
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            />
+            <span class="dropzone-title">Choose a Word (.docx)</span>
+            <span class="dropzone-subtitle">opens a clean reading view</span>
+          </label>
+        </div>
         <div class="upload-meta">
           <p id="file-name" class="meta-line">No file selected.</p>
-          <p id="file-status" class="meta-line">Upload a PDF to render page 1.</p>
+          <p id="file-status" class="meta-line">Upload a PDF or DOCX to get started.</p>
         </div>
       </article>
       <article class="viewer-card">
         <div class="viewer-header">
           <div>
             <h2>Page preview</h2>
-            <p class="muted">PDF.js canvas render</p>
+            <p class="muted">PDF.js canvas render or DOCX reading view</p>
           </div>
           <span id="page-indicator" class="pill">Page 1 / -</span>
         </div>
         <div id="viewer-stage" class="viewer-stage">
           <div id="viewer-placeholder" class="viewer-placeholder">
-            Page 1 will appear here after upload.
+            Document preview will appear here after upload.
           </div>
           <div id="pdf-stack" class="pdf-stack" aria-hidden="true">
             <canvas id="pdf-canvas" class="pdf-canvas" aria-label="PDF page preview"></canvas>
             <div id="highlight-layer" class="highlight-layer"></div>
           </div>
+          <div id="docx-viewer" class="docx-viewer" aria-live="polite"></div>
         </div>
         <div class="progress-panel" aria-live="polite">
           <div class="progress-meta">
@@ -61,7 +73,7 @@ app.innerHTML = `
           <div class="progress-bar">
             <div id="progress-fill" class="progress-fill"></div>
           </div>
-          <p id="progress-status" class="muted progress-status">Waiting for PDF upload.</p>
+          <p id="progress-status" class="muted progress-status">Waiting for document upload.</p>
         </div>
         <div class="export-panel">
           <button id="download-highlighted" class="primary-button" type="button" disabled>
@@ -97,7 +109,9 @@ app.innerHTML = `
 `;
 
 const pdfInput = document.querySelector<HTMLInputElement>('#pdf-input');
-const dropzone = document.querySelector<HTMLLabelElement>('.dropzone');
+const docxInput = document.querySelector<HTMLInputElement>('#docx-input');
+const pdfDropzone = document.querySelector<HTMLLabelElement>('#pdf-dropzone');
+const docxDropzone = document.querySelector<HTMLLabelElement>('#docx-dropzone');
 const fileName = document.querySelector<HTMLParagraphElement>('#file-name');
 const fileStatus = document.querySelector<HTMLParagraphElement>('#file-status');
 const pageIndicator = document.querySelector<HTMLSpanElement>('#page-indicator');
@@ -107,6 +121,7 @@ const pdfStack = document.querySelector<HTMLDivElement>('#pdf-stack');
 const pdfCanvas = document.querySelector<HTMLCanvasElement>('#pdf-canvas');
 const pdfContext = pdfCanvas?.getContext('2d');
 const highlightLayer = document.querySelector<HTMLDivElement>('#highlight-layer');
+const docxViewer = document.querySelector<HTMLDivElement>('#docx-viewer');
 const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-status');
 const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
 const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
@@ -126,6 +141,8 @@ let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
 let pdfBytes: ArrayBuffer | null = null;
 let currentFileName: string | null = null;
 const pinnedHighlightIds = new Set<string>();
+type DocumentSourceKind = 'pdf' | 'docx' | null;
+let currentSourceKind: DocumentSourceKind = null;
 
 type IndexedPage = {
   pageNumber: number;
@@ -705,6 +722,13 @@ const setPageIndicator = (current: number, total: number | null) => {
   pageIndicator.textContent = `Page ${current} / ${total ?? '-'}`;
 };
 
+const setPageIndicatorLabel = (label: string) => {
+  if (!pageIndicator) {
+    return;
+  }
+  pageIndicator.textContent = label;
+};
+
 const formatProgressCount = (completed: number, total: number) => `${completed} / ${total} pages`;
 
 const getProgressPercent = (completed: number, total: number) => {
@@ -726,10 +750,19 @@ const setProgress = (completed: number, total: number, message: string) => {
   }
 };
 
+const setViewerMode = (mode: DocumentSourceKind) => {
+  currentSourceKind = mode;
+  if (!viewerStage) {
+    return;
+  }
+  viewerStage.classList.toggle('is-ready', mode !== null);
+  viewerStage.classList.toggle('is-docx', mode === 'docx');
+};
+
 const resetProgress = () => {
   backgroundProcessedPages = 0;
   backgroundTotalPages = 0;
-  setProgress(0, 0, 'Waiting for PDF upload.');
+  setProgress(0, 0, 'Waiting for document upload.');
 };
 
 const resetViewer = () => {
@@ -747,11 +780,13 @@ const resetViewer = () => {
   indexedPages.clear();
   resetProgress();
   setExportEnabled(false);
-  if (viewerStage) {
-    viewerStage.classList.remove('is-ready');
-  }
+  setViewerMode(null);
   if (viewerPlaceholder) {
-    viewerPlaceholder.textContent = 'Page 1 will appear here after upload.';
+    viewerPlaceholder.textContent = 'Document preview will appear here after upload.';
+  }
+  if (docxViewer) {
+    docxViewer.innerHTML = '';
+    docxViewer.scrollTop = 0;
   }
   if (pdfCanvas && pdfContext) {
     pdfContext.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
@@ -762,6 +797,140 @@ const resetViewer = () => {
   setPageIndicator(1, null);
   pinnedHighlightIds.clear();
   renderStudyStrip();
+};
+
+const isDocxFile = (file: File) => {
+  if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    return true;
+  }
+  return file.name.toLowerCase().endsWith('.docx');
+};
+
+const sanitizeDocxHref = (href: string) => {
+  const trimmed = href.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith('#')) {
+    return trimmed;
+  }
+  const lowered = trimmed.toLowerCase();
+  if (lowered.startsWith('javascript:') || lowered.startsWith('data:')) {
+    return null;
+  }
+  try {
+    const url = new URL(trimmed, window.location.origin);
+    const allowed = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+    if (allowed.has(url.protocol)) {
+      return url.href;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+};
+
+const sanitizeDocxHtml = (html: string) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const blockedTags = new Set([
+    'script',
+    'style',
+    'link',
+    'meta',
+    'iframe',
+    'object',
+    'embed',
+    'form',
+    'input',
+    'button',
+    'textarea',
+    'select',
+    'option',
+    'svg',
+    'math',
+    'img',
+    'video',
+    'audio',
+    'canvas',
+  ]);
+
+  const elements = Array.from(doc.body.querySelectorAll('*'));
+  for (const element of elements) {
+    const tag = element.tagName.toLowerCase();
+    if (blockedTags.has(tag)) {
+      element.remove();
+      continue;
+    }
+
+    for (const attr of Array.from(element.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on')) {
+        element.removeAttribute(attr.name);
+        continue;
+      }
+      if (tag === 'a' && name === 'href') {
+        const safeHref = sanitizeDocxHref(attr.value);
+        if (!safeHref) {
+          element.removeAttribute(attr.name);
+        } else {
+          element.setAttribute('href', safeHref);
+          element.setAttribute('rel', 'noreferrer noopener');
+          element.setAttribute('target', '_blank');
+        }
+        continue;
+      }
+      if ((tag === 'td' || tag === 'th') && (name === 'colspan' || name === 'rowspan')) {
+        if (!/^\d+$/.test(attr.value)) {
+          element.removeAttribute(attr.name);
+        }
+        continue;
+      }
+      element.removeAttribute(attr.name);
+    }
+  }
+
+  return doc.body.innerHTML.trim();
+};
+
+const loadDocx = async (file: File) => {
+  if (!isDocxFile(file)) {
+    setStatus('That file is not a DOCX. Please choose a .docx file.');
+    return;
+  }
+
+  resetViewer();
+  setFileName(file.name);
+  currentFileName = file.name;
+  setStatus('Loading DOCX...');
+  setProgress(0, 0, 'Converting DOCX...');
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const mammoth = await import('mammoth');
+    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    if (result.messages?.length) {
+      console.debug('Mammoth conversion messages', result.messages);
+    }
+    const sanitizedHtml = sanitizeDocxHtml(result.value ?? '');
+    if (docxViewer) {
+      docxViewer.innerHTML =
+        sanitizedHtml || '<p class="muted">No readable text found in this DOCX.</p>';
+      docxViewer.scrollTop = 0;
+    }
+    setViewerMode('docx');
+    renderStudyStrip();
+    setPageIndicatorLabel('DOCX preview');
+    setStatus('DOCX loaded into reading view.');
+    setProgress(0, 0, 'DOCX ready. Highlights coming soon.');
+  } catch (error) {
+    console.error(error);
+    setStatus('Unable to render this DOCX. Try another file.');
+    setProgress(0, 0, 'DOCX rendering failed.');
+    if (viewerPlaceholder) {
+      viewerPlaceholder.textContent = 'DOCX rendering failed. Upload another file.';
+    }
+  }
 };
 
 const isPdfTextItem = (item: PdfTextItem | PdfTextMarkedContent): item is PdfTextItem =>
@@ -1410,10 +1579,14 @@ const renderStudyStrip = () => {
   setStudyStripExportState(totalPinned, totalHighlights);
 
   if (!sections.length) {
-    studyStripEmpty.textContent =
-      indexedPages.size === 0
-        ? 'Upload a PDF to populate the study strip.'
-        : 'No highlights available yet.';
+    if (currentSourceKind === 'docx') {
+      studyStripEmpty.textContent = 'DOCX highlights will appear here once available.';
+    } else {
+      studyStripEmpty.textContent =
+        indexedPages.size === 0
+          ? 'Upload a PDF to populate the study strip.'
+          : 'No highlights available yet.';
+    }
     studyStripEmpty.hidden = false;
     studyStripList.hidden = true;
     return;
@@ -1693,9 +1866,7 @@ const loadPdf = async (file: File) => {
     backgroundTotalPages = pdfDoc.numPages;
     backgroundProcessedPages = 0;
     setProgress(0, backgroundTotalPages, `Preparing page 1 of ${pdfDoc.numPages}...`);
-    if (viewerStage) {
-      viewerStage.classList.add('is-ready');
-    }
+    setViewerMode('pdf');
     setStatus(`Rendering page 1 of ${pdfDoc.numPages}...`);
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
@@ -1730,6 +1901,31 @@ const loadPdf = async (file: File) => {
   }
 };
 
+const bindDropzone = (zone: HTMLLabelElement | null, onFile: (file: File) => void) => {
+  if (!zone) {
+    return;
+  }
+
+  zone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    zone.classList.add('is-dragover');
+  });
+
+  zone.addEventListener('dragleave', () => {
+    zone.classList.remove('is-dragover');
+  });
+
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    zone.classList.remove('is-dragover');
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) {
+      return;
+    }
+    onFile(file);
+  });
+};
+
 pdfInput?.addEventListener('change', (event) => {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
@@ -1740,23 +1936,22 @@ pdfInput?.addEventListener('change', (event) => {
   target.value = '';
 });
 
-dropzone?.addEventListener('dragover', (event) => {
-  event.preventDefault();
-  dropzone.classList.add('is-dragover');
-});
-
-dropzone?.addEventListener('dragleave', () => {
-  dropzone.classList.remove('is-dragover');
-});
-
-dropzone?.addEventListener('drop', (event) => {
-  event.preventDefault();
-  dropzone.classList.remove('is-dragover');
-  const file = event.dataTransfer?.files?.[0];
+docxInput?.addEventListener('change', (event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
   if (!file) {
     return;
   }
+  void loadDocx(file);
+  target.value = '';
+});
+
+bindDropzone(pdfDropzone, (file) => {
   void loadPdf(file);
+});
+
+bindDropzone(docxDropzone, (file) => {
+  void loadDocx(file);
 });
 
 downloadButton?.addEventListener('click', () => {
