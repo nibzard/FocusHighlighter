@@ -131,7 +131,15 @@
       "id": "T010",
       "title": "Export highlighted PDF for PDF inputs using pdf-lib rectangles with correct coordinates",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T21:09:11Z",
+      "details": "Added highlighted PDF export using pdf-lib rectangles and a download action.",
+      "files": [
+        "package.json",
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T011",

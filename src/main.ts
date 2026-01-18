@@ -63,6 +63,12 @@ app.innerHTML = `
           </div>
           <p id="progress-status" class="muted progress-status">Waiting for PDF upload.</p>
         </div>
+        <div class="export-panel">
+          <button id="download-highlighted" class="primary-button" type="button" disabled>
+            Download highlighted PDF
+          </button>
+          <p class="muted export-note">Embeds highlight rectangles into the original PDF.</p>
+        </div>
       </article>
     </section>
   </main>
@@ -82,12 +88,15 @@ const highlightLayer = document.querySelector<HTMLDivElement>('#highlight-layer'
 const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-status');
 const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
 const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
+const downloadButton = document.querySelector<HTMLButtonElement>('#download-highlighted');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
 let renderTask: RenderTask | null = null;
 let resizeTimer: number | undefined;
 let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
+let pdfBytes: ArrayBuffer | null = null;
+let currentFileName: string | null = null;
 
 type IndexedPage = {
   pageNumber: number;
@@ -124,6 +133,13 @@ type PageTextMap = {
   fullText: string;
   items: PdfTextItem[];
   itemRanges: PdfTextItemRange[];
+};
+
+type PdfRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 type SentenceSegment = {
@@ -634,6 +650,12 @@ const setFileName = (name: string) => {
   }
 };
 
+const setExportEnabled = (enabled: boolean) => {
+  if (downloadButton) {
+    downloadButton.disabled = !enabled;
+  }
+};
+
 const setPageIndicator = (current: number, total: number | null) => {
   if (!pageIndicator) {
     return;
@@ -676,10 +698,13 @@ const resetViewer = () => {
   currentPageEmbeddings = null;
   currentPageHighlightSentences = [];
   currentViewport = null;
+  pdfBytes = null;
+  currentFileName = null;
   embeddingRequestId += 1;
   backgroundProcessId += 1;
   indexedPages.clear();
   resetProgress();
+  setExportEnabled(false);
   if (viewerStage) {
     viewerStage.classList.remove('is-ready');
   }
@@ -1052,6 +1077,42 @@ const getItemViewportRect = (
   return { left, top, width, height };
 };
 
+const getItemPdfRect = (
+  item: PdfTextItem,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+): PdfRect | null => {
+  const rect = getItemViewportRect(item, viewport);
+  if (!rect) {
+    return null;
+  }
+
+  const pdfPointConverter = (viewport as { convertToPdfPoint?: (x: number, y: number) => [number, number] })
+    .convertToPdfPoint;
+  if (typeof pdfPointConverter === 'function') {
+    const [x1, y1] = pdfPointConverter(rect.left, rect.top);
+    const [x2, y2] = pdfPointConverter(rect.left + rect.width, rect.top + rect.height);
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return { x, y, width, height };
+  }
+
+  const scale = (viewport as { scale?: number }).scale ?? 1;
+  const pageHeight = viewport.height / scale;
+  const x = rect.left / scale;
+  const y = pageHeight - (rect.top + rect.height) / scale;
+  const width = rect.width / scale;
+  const height = rect.height / scale;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { x, y, width, height };
+};
+
 const renderHighlights = () => {
   if (!highlightLayer || !currentViewport || !currentPageTextMap) {
     if (highlightLayer) {
@@ -1101,6 +1162,126 @@ const renderHighlights = () => {
   highlightLayer.append(fragment);
 
   return { sentences: highlightSentences.length, rects: rectCount };
+};
+
+const getPageHighlightSentences = (entry: IndexedPage) => {
+  if (entry.highlights && entry.highlights.length > 0) {
+    return entry.highlights;
+  }
+  const fallbackCount = getHighlightTargetCount(entry.sentences.length);
+  if (!fallbackCount) {
+    return [];
+  }
+  return entry.sentences.slice(0, fallbackCount);
+};
+
+const collectHighlightRects = (
+  textMap: PageTextMap,
+  highlightSentences: SentenceSegment[],
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+) => {
+  const rects: PdfRect[] = [];
+  for (const sentence of highlightSentences) {
+    const overlappingItems = textMap.itemRanges.filter((range) =>
+      rangesOverlap(range.charStart, range.charEnd, sentence.charStart, sentence.charEnd),
+    );
+
+    for (const range of overlappingItems) {
+      const item = textMap.items[range.itemIndex];
+      const rect = getItemPdfRect(item, viewport);
+      if (!rect) {
+        continue;
+      }
+      rects.push(rect);
+    }
+  }
+  return rects;
+};
+
+const getDownloadFileName = (name: string | null) => {
+  if (!name) {
+    return 'highlighted.pdf';
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return 'highlighted.pdf';
+  }
+  if (trimmed.toLowerCase().endsWith('.pdf')) {
+    return `highlighted-${trimmed}`;
+  }
+  return `highlighted-${trimmed}.pdf`;
+};
+
+const exportHighlightedPdf = async () => {
+  if (!pdfDoc || !pdfBytes) {
+    setStatus('Upload a PDF first to export highlights.');
+    return;
+  }
+
+  if (indexedPages.size === 0) {
+    setStatus('Highlights are not ready yet.');
+    return;
+  }
+
+  setExportEnabled(false);
+  const totalPages = pdfDoc.numPages;
+  const processedPages = indexedPages.size;
+  if (processedPages < totalPages) {
+    setStatus(`Exporting highlights for ${processedPages} of ${totalPages} pages...`);
+  } else {
+    setStatus('Exporting highlighted PDF...');
+  }
+
+  try {
+    const { PDFDocument, rgb } = await import('pdf-lib');
+    const pdfDocument = await PDFDocument.load(pdfBytes);
+    const pdfPages = pdfDocument.getPages();
+    const entries = Array.from(indexedPages.values()).sort((a, b) => a.pageNumber - b.pageNumber);
+
+    for (const entry of entries) {
+      if (entry.pageNumber < 1 || entry.pageNumber > pdfPages.length) {
+        continue;
+      }
+      const pdfjsPage = await pdfDoc.getPage(entry.pageNumber);
+      const viewport = pdfjsPage.getViewport({ scale: 1 });
+      const highlightSentences = getPageHighlightSentences(entry);
+      if (highlightSentences.length === 0) {
+        continue;
+      }
+      const rects = collectHighlightRects(entry.textMap, highlightSentences, viewport);
+      if (!rects.length) {
+        continue;
+      }
+      const pdfPage = pdfPages[entry.pageNumber - 1];
+      for (const rect of rects) {
+        pdfPage.drawRectangle({
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          color: rgb(1, 0.9, 0.2),
+          opacity: 0.35,
+        });
+      }
+    }
+
+    const outputBytes = await pdfDocument.save();
+    const blob = new Blob([outputBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = getDownloadFileName(currentFileName);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus('Highlighted PDF ready for download.');
+  } catch (error) {
+    console.error(error);
+    setStatus('Failed to export highlighted PDF.');
+  } finally {
+    setExportEnabled(true);
+  }
 };
 
 const indexPdfPage = async (
@@ -1236,13 +1417,15 @@ const loadPdf = async (file: File) => {
     return;
   }
 
-  setFileName(file.name);
-  setStatus('Loading PDF...');
   resetViewer();
+  setFileName(file.name);
+  currentFileName = file.name;
+  setStatus('Loading PDF...');
   const processId = backgroundProcessId;
 
   try {
     const buffer = await file.arrayBuffer();
+    pdfBytes = buffer;
     pdfDoc?.destroy();
     const loadingTask = getDocument({ data: buffer });
     pdfDoc = await loadingTask.promise;
@@ -1265,6 +1448,7 @@ const loadPdf = async (file: File) => {
       sentences: currentPageSentences,
       highlights: currentPageHighlightSentences,
     });
+    setExportEnabled(true);
     const highlightStats = renderHighlights();
     const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences.`;
     setStatus(`${statusPrefix} Highlighted ${highlightStats.sentences} sentences.`);
@@ -1313,6 +1497,10 @@ dropzone?.addEventListener('drop', (event) => {
     return;
   }
   void loadPdf(file);
+});
+
+downloadButton?.addEventListener('click', () => {
+  void exportHighlightedPdf();
 });
 
 window.addEventListener('resize', () => {
