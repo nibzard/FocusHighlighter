@@ -238,7 +238,7 @@
       "title": "Add question highlight mode with query embedding and top-K selection",
       "priority": 4,
       "status": "done",
-      "updated_at": "2026-01-18T23:33:38Z",
+      "updated_at": "2026-01-18T23:36:29Z",
       "details": "Added question highlight mode with query embedding and top-K selection.",
       "files": [
         "src/main.ts",
@@ -303,7 +303,7 @@
       "title": "Handle scanned PDFs with empty text extraction and user-facing warning",
       "priority": 3,
       "status": "done",
-      "updated_at": "2026-01-18T23:13:57Z",
+      "updated_at": "2026-01-18T23:14:22Z",
       "details": "Added a scanned PDF warning when text extraction is empty.",
       "files": [
         "src/main.ts",
@@ -315,7 +315,17 @@
       "id": "T024",
       "title": "Create multilingual smoke-test plan and sample docs for manual QA",
       "priority": 4,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T23:38:55Z",
+      "details": "Created multilingual smoke test plan and sample text fixtures for English, Spanish, French, Chinese, and Arabic.",
+      "files": [
+        "qa/SMOKE_TEST_PLAN.md",
+        "qa/samples/sample-en.txt",
+        "qa/samples/sample-es.txt",
+        "qa/samples/sample-fr.txt",
+        "qa/samples/sample-zh.txt",
+        "qa/samples/sample-ar.txt"
+      ]
     }
   ]
 }
