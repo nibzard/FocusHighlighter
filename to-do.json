@@ -225,7 +225,7 @@
       "title": "Export highlighted PDF for Word/URL/Text sources (generated PDF with highlights)",
       "priority": 2,
       "status": "done",
-      "updated_at": "2026-01-18T22:16:48Z",
+      "updated_at": "2026-01-18T22:17:35Z",
       "details": "Added highlighted PDF export for reading view sources using html2canvas snapshots.",
       "files": [
         "package.json",
@@ -244,7 +244,7 @@
       "title": "Implement highlight intensity control and mode toggles in UI",
       "priority": 3,
       "status": "done",
-      "updated_at": "2026-01-18T22:26:58Z",
+      "updated_at": "2026-01-18T22:28:58Z",
       "details": "Added highlight intensity controls that adjust highlight counts and added auto/question mode toggle UI.",
       "files": [
         "src/main.ts",
@@ -256,7 +256,14 @@
       "id": "T020",
       "title": "Add accessibility features: keyboard nav, contrast checks, alternate list view",
       "priority": 3,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T22:44:12Z",
+      "details": "Added keyboard page navigation, contrast-aware highlight styling with list view toggle, and an accessible highlights list view.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T021",

@@ -28,12 +28,12 @@ app.innerHTML = `
           </p>
         </div>
         <div class="upload-options">
-          <label class="dropzone" id="pdf-dropzone" for="pdf-input">
+          <label class="dropzone" id="pdf-dropzone" for="pdf-input" tabindex="0" role="button">
             <input id="pdf-input" type="file" accept="application/pdf" />
             <span class="dropzone-title">Choose a PDF</span>
             <span class="dropzone-subtitle">or drag & drop here</span>
           </label>
-          <label class="dropzone" id="docx-dropzone" for="docx-input">
+          <label class="dropzone" id="docx-dropzone" for="docx-input" tabindex="0" role="button">
             <input
               id="docx-input"
               type="file"
@@ -139,8 +139,37 @@ app.innerHTML = `
             </div>
             <p id="intensity-note" class="muted control-note">Balanced coverage for typical study loads.</p>
           </div>
+          <div class="control-group">
+            <p class="control-label">Viewer</p>
+            <div class="segmented-control" role="group" aria-label="Viewer mode">
+              <button
+                class="segment-button"
+                type="button"
+                data-view-mode="preview"
+                aria-pressed="true"
+              >
+                Preview
+              </button>
+              <button
+                class="segment-button"
+                type="button"
+                data-view-mode="list"
+                aria-pressed="false"
+              >
+                List
+              </button>
+            </div>
+            <p id="contrast-note" class="muted control-note">Contrast check pending.</p>
+          </div>
         </div>
-        <div id="viewer-stage" class="viewer-stage">
+        <div
+          id="viewer-stage"
+          class="viewer-stage"
+          tabindex="0"
+          role="region"
+          aria-label="Document viewer"
+          aria-keyshortcuts="ArrowLeft ArrowRight PageUp PageDown Home End"
+        >
           <div id="viewer-placeholder" class="viewer-placeholder">
             Document preview will appear here after upload.
           </div>
@@ -149,6 +178,14 @@ app.innerHTML = `
             <div id="highlight-layer" class="highlight-layer"></div>
           </div>
           <div id="docx-viewer" class="docx-viewer" aria-live="polite"></div>
+          <div
+            id="highlight-list-view"
+            class="highlight-list"
+            role="region"
+            aria-label="Highlights list"
+            aria-live="polite"
+            hidden
+          ></div>
         </div>
         <div class="progress-panel" aria-live="polite">
           <div class="progress-meta">
@@ -230,6 +267,11 @@ const highlightIntensityButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-highlight-intensity]'),
 );
 const highlightIntensityNote = document.querySelector<HTMLParagraphElement>('#intensity-note');
+const viewerModeButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-view-mode]'),
+);
+const contrastNote = document.querySelector<HTMLParagraphElement>('#contrast-note');
+const highlightListView = document.querySelector<HTMLDivElement>('#highlight-list-view');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
@@ -244,6 +286,7 @@ let currentSourceKind: DocumentSourceKind = null;
 type ReadingSourceKind = 'docx' | 'url' | 'text';
 type HighlightMode = 'auto' | 'question';
 type HighlightIntensity = 'less' | 'default' | 'more';
+type ViewerMode = 'preview' | 'list';
 
 type IndexedPage =
   | {
@@ -428,6 +471,7 @@ const highlightIntensitySettings: Record<
 };
 let currentHighlightIntensity: HighlightIntensity = 'default';
 let currentHighlightMode: HighlightMode = 'auto';
+let currentViewMode: ViewerMode = 'preview';
 const highlightMmrLambda = 0.35;
 let embeddingPipelinePromise: Promise<EmbeddingPipeline> | null = null;
 let embeddingBackend: EmbeddingDevice | null = null;
@@ -436,10 +480,12 @@ let currentPageEmbeddings: Float32Array[] | null = null;
 let currentPageHighlightSentences: SentenceSegment[] = [];
 let docxHtml: string | null = null;
 let docxPages: DocxPage[] = [];
+let currentDocxPageNumber = 1;
 const indexedPages = new Map<number, IndexedPage>();
 let backgroundProcessId = 0;
 let backgroundProcessedPages = 0;
 let backgroundTotalPages = 0;
+let pdfNavigationId = 0;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -938,6 +984,25 @@ const setProgress = (completed: number, total: number, message: string) => {
   }
 };
 
+const updateViewerModeVisibility = () => {
+  if (!viewerStage) {
+    return;
+  }
+  const isList = currentViewMode === 'list';
+  const isPdf = currentSourceKind === 'pdf';
+  const isDocx = currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text';
+  viewerStage.classList.toggle('is-list', isList);
+  if (pdfStack) {
+    pdfStack.setAttribute('aria-hidden', isList || !isPdf ? 'true' : 'false');
+  }
+  if (docxViewer) {
+    docxViewer.setAttribute('aria-hidden', isList || !isDocx ? 'true' : 'false');
+  }
+  if (highlightListView) {
+    highlightListView.hidden = !isList;
+  }
+};
+
 const setViewerMode = (mode: DocumentSourceKind) => {
   currentSourceKind = mode;
   if (!viewerStage) {
@@ -945,6 +1010,7 @@ const setViewerMode = (mode: DocumentSourceKind) => {
   }
   viewerStage.classList.toggle('is-ready', mode !== null);
   viewerStage.classList.toggle('is-docx', mode === 'docx' || mode === 'url' || mode === 'text');
+  updateViewerModeVisibility();
   setExportNote(mode);
 };
 
@@ -966,6 +1032,7 @@ const resetViewer = () => {
   currentFileName = null;
   docxHtml = null;
   docxPages = [];
+  currentDocxPageNumber = 1;
   embeddingRequestId += 1;
   backgroundProcessId += 1;
   indexedPages.clear();
@@ -988,6 +1055,142 @@ const resetViewer = () => {
   setPageIndicator(1, null);
   pinnedHighlightIds.clear();
   renderStudyStrip();
+};
+
+type RgbColor = {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+};
+
+const parseColor = (value: string): RgbColor | null => {
+  const input = value.trim().toLowerCase();
+  if (!input) {
+    return null;
+  }
+  if (input.startsWith('#')) {
+    const hex = input.slice(1);
+    if (hex.length === 3) {
+      const r = Number.parseInt(hex[0] + hex[0], 16);
+      const g = Number.parseInt(hex[1] + hex[1], 16);
+      const b = Number.parseInt(hex[2] + hex[2], 16);
+      return { r, g, b, a: 1 };
+    }
+    if (hex.length === 6) {
+      const r = Number.parseInt(hex.slice(0, 2), 16);
+      const g = Number.parseInt(hex.slice(2, 4), 16);
+      const b = Number.parseInt(hex.slice(4, 6), 16);
+      return { r, g, b, a: 1 };
+    }
+    return null;
+  }
+
+  const rgbMatch = input.match(/rgba?\((.+)\)/);
+  if (!rgbMatch) {
+    return null;
+  }
+  const rawParts = rgbMatch[1].replace(/\//g, ',');
+  const parts = rawParts.split(/[\s,]+/).filter(Boolean);
+  if (parts.length < 3) {
+    return null;
+  }
+  const parseChannel = (part: string) => {
+    if (part.endsWith('%')) {
+      return (Number.parseFloat(part) / 100) * 255;
+    }
+    return Number.parseFloat(part);
+  };
+  const r = parseChannel(parts[0]);
+  const g = parseChannel(parts[1]);
+  const b = parseChannel(parts[2]);
+  const alpha = parts.length >= 4 ? Number.parseFloat(parts[3]) : 1;
+  if (![r, g, b, alpha].every((val) => Number.isFinite(val))) {
+    return null;
+  }
+  return {
+    r: Math.min(255, Math.max(0, r)),
+    g: Math.min(255, Math.max(0, g)),
+    b: Math.min(255, Math.max(0, b)),
+    a: Math.min(1, Math.max(0, alpha)),
+  };
+};
+
+const blendOnBackground = (foreground: RgbColor, background: RgbColor): RgbColor => {
+  const alpha = foreground.a + background.a * (1 - foreground.a);
+  if (alpha <= 0) {
+    return { r: 0, g: 0, b: 0, a: 0 };
+  }
+  const r = (foreground.r * foreground.a + background.r * background.a * (1 - foreground.a)) / alpha;
+  const g = (foreground.g * foreground.a + background.g * background.a * (1 - foreground.a)) / alpha;
+  const b = (foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha;
+  return { r, g, b, a: alpha };
+};
+
+const relativeLuminance = (color: RgbColor) => {
+  const toLinear = (value: number) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
+  const r = toLinear(color.r);
+  const g = toLinear(color.g);
+  const b = toLinear(color.b);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+const getContrastRatio = (colorA: RgbColor, colorB: RgbColor) => {
+  const lumA = relativeLuminance(colorA);
+  const lumB = relativeLuminance(colorB);
+  const lighter = Math.max(lumA, lumB);
+  const darker = Math.min(lumA, lumB);
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const updateContrastState = () => {
+  if (!document?.documentElement) {
+    return;
+  }
+  const styles = window.getComputedStyle(document.documentElement);
+  const highlightFill = parseColor(styles.getPropertyValue('--highlight-fill')) ?? parseColor('#ffd668');
+  const pageBackground = parseColor(styles.getPropertyValue('--page-bg')) ?? parseColor('#ffffff');
+  if (!highlightFill || !pageBackground) {
+    return;
+  }
+
+  const blended = blendOnBackground(highlightFill, pageBackground);
+  const ratio = getContrastRatio(blended, pageBackground);
+  const prefersContrast =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-contrast: more)').matches;
+  const forcedColors =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(forced-colors: active)').matches;
+  const boosted = forcedColors || prefersContrast || ratio < 3;
+
+  document.documentElement.dataset.contrast = boosted ? 'boosted' : 'standard';
+
+  if (contrastNote) {
+    if (forcedColors) {
+      contrastNote.textContent = 'Contrast check: using system colors.';
+    } else if (boosted) {
+      contrastNote.textContent = `Contrast check: boosted (${ratio.toFixed(1)}:1).`;
+    } else {
+      contrastNote.textContent = `Contrast check: ok (${ratio.toFixed(1)}:1).`;
+    }
+  }
+};
+
+const attachContrastWatcher = (query: string) => {
+  if (typeof window.matchMedia !== 'function') {
+    return;
+  }
+  const media = window.matchMedia(query);
+  const handler = () => updateContrastState();
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', handler);
+  } else if (typeof media.addListener === 'function') {
+    media.addListener(handler);
+  }
 };
 
 const isDocxFile = (file: File) => {
@@ -1697,7 +1900,29 @@ const updateDocxPageIndicator = () => {
     }
   }
 
+  currentDocxPageNumber = current;
   setPageIndicator(current, docxPages.length);
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
+};
+
+const scrollToDocxPage = (pageNumber: number) => {
+  if (!docxViewer || docxPages.length === 0) {
+    return;
+  }
+  const totalPages = docxPages.length;
+  const clamped = Math.min(totalPages, Math.max(1, pageNumber));
+  const target = docxPages.find((page) => page.pageNumber === clamped);
+  if (!target) {
+    return;
+  }
+  currentDocxPageNumber = target.pageNumber;
+  setPageIndicator(currentDocxPageNumber, totalPages);
+  docxViewer.scrollTo({ top: target.element.offsetTop });
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
 };
 
 const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) => {
@@ -2432,6 +2657,125 @@ const setStudyStripExportState = (pinnedCount: number, totalCount: number) => {
     pinnedCount > 0 ? 'Exports pinned lines only.' : 'Exports all highlighted lines.';
 };
 
+const getCurrentPageNumber = () => {
+  if (currentSourceKind === 'pdf') {
+    return currentPage?.pageNumber ?? null;
+  }
+  if (currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') {
+    return currentDocxPageNumber || 1;
+  }
+  return null;
+};
+
+const getTotalPages = () => {
+  if (currentSourceKind === 'pdf') {
+    return pdfDoc?.numPages ?? null;
+  }
+  if (currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') {
+    return docxPages.length > 0 ? docxPages.length : null;
+  }
+  return null;
+};
+
+const getHighlightListState = (pageNumber: number | null) => {
+  if (!pageNumber) {
+    return { highlights: [] as SentenceSegment[], ready: false };
+  }
+
+  if (currentSourceKind === 'pdf' && currentPage?.pageNumber === pageNumber) {
+    const fallbackCount = getHighlightTargetCount(currentPageSentences.length);
+    const highlights =
+      currentPageHighlightSentences.length > 0
+        ? currentPageHighlightSentences
+        : currentPageSentences.slice(0, fallbackCount);
+    return { highlights, ready: true };
+  }
+
+  const entry = indexedPages.get(pageNumber);
+  if (!entry) {
+    return { highlights: [] as SentenceSegment[], ready: false };
+  }
+
+  return { highlights: getPageHighlightSentences(entry), ready: true };
+};
+
+const renderHighlightListView = () => {
+  if (!highlightListView || currentViewMode !== 'list') {
+    return;
+  }
+
+  highlightListView.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'highlight-list-header';
+
+  const titleEl = document.createElement('h3');
+  titleEl.className = 'highlight-list-title';
+
+  const metaEl = document.createElement('span');
+  metaEl.className = 'highlight-list-meta';
+
+  headerEl.append(titleEl, metaEl);
+  fragment.append(headerEl);
+
+  const itemsEl = document.createElement('div');
+  itemsEl.className = 'highlight-list-items';
+  itemsEl.setAttribute('role', 'list');
+
+  const pageNumber = getCurrentPageNumber();
+  const totalPages = getTotalPages();
+
+  if (!currentSourceKind) {
+    titleEl.textContent = 'Highlights list';
+    metaEl.textContent = 'Upload a document to view highlights.';
+  } else if (!pageNumber) {
+    titleEl.textContent = 'Highlights list';
+    metaEl.textContent = 'Page preview not ready yet.';
+  } else {
+    titleEl.textContent = `Highlights for page ${pageNumber}`;
+    const { highlights, ready } = getHighlightListState(pageNumber);
+    const pageMeta = totalPages ? `Page ${pageNumber} of ${totalPages}` : `Page ${pageNumber}`;
+    if (!ready) {
+      metaEl.textContent = `${pageMeta} - Processing highlights.`;
+    } else {
+      metaEl.textContent = `${pageMeta} - ${highlights.length} highlights`;
+    }
+
+    if (!ready || highlights.length === 0) {
+      const emptyEl = document.createElement('p');
+      emptyEl.className = 'highlight-list-empty';
+      emptyEl.textContent = ready ? 'No highlights available on this page yet.' : 'Highlights are still processing.';
+      itemsEl.append(emptyEl);
+    } else {
+      for (const sentence of highlights) {
+        const isPinned = pinnedHighlightIds.has(sentence.id);
+        const itemEl = document.createElement('div');
+        itemEl.className = `highlight-list-item${isPinned ? ' pinned' : ''}`;
+        itemEl.setAttribute('role', 'listitem');
+
+        const textEl = document.createElement('p');
+        textEl.className = 'highlight-list-text';
+        textEl.textContent = sentence.text;
+
+        const pinButton = document.createElement('button');
+        pinButton.type = 'button';
+        pinButton.className = 'strip-pin';
+        pinButton.dataset.sentenceId = sentence.id;
+        pinButton.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+        pinButton.setAttribute('aria-label', `${isPinned ? 'Unpin' : 'Pin'} highlight`);
+        pinButton.textContent = isPinned ? 'Unpin' : 'Pin';
+
+        itemEl.append(textEl, pinButton);
+        itemsEl.append(itemEl);
+      }
+    }
+  }
+
+  fragment.append(itemsEl);
+  highlightListView.append(fragment);
+};
+
 const renderStudyStrip = () => {
   if (!studyStripList || !studyStripEmpty) {
     return;
@@ -2474,6 +2818,7 @@ const renderStudyStrip = () => {
 
       const itemEl = document.createElement('div');
       itemEl.className = `strip-item${isPinned ? ' pinned' : ''}`;
+      itemEl.setAttribute('role', 'listitem');
 
       const textEl = document.createElement('p');
       textEl.className = 'strip-text';
@@ -2484,6 +2829,7 @@ const renderStudyStrip = () => {
       pinButton.className = 'strip-pin';
       pinButton.dataset.sentenceId = sentence.id;
       pinButton.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+      pinButton.setAttribute('aria-label', `${isPinned ? 'Unpin' : 'Pin'} highlight`);
       pinButton.textContent = isPinned ? 'Unpin' : 'Pin';
 
       itemEl.append(textEl, pinButton);
@@ -2524,12 +2870,19 @@ const renderStudyStrip = () => {
     }
     studyStripEmpty.hidden = false;
     studyStripList.hidden = true;
+    if (currentViewMode === 'list') {
+      renderHighlightListView();
+    }
     return;
   }
 
   studyStripEmpty.hidden = true;
   studyStripList.hidden = false;
   studyStripList.append(fragment);
+
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
 };
 
 const updateHighlightModeControls = () => {
@@ -2610,6 +2963,28 @@ const setHighlightIntensity = (intensity: HighlightIntensity) => {
   currentHighlightIntensity = intensity;
   updateHighlightIntensityControls();
   applyHighlightIntensity();
+};
+
+const updateViewModeControls = () => {
+  viewerModeButtons.forEach((button) => {
+    const mode = button.dataset.viewMode as ViewerMode | undefined;
+    if (!mode) {
+      return;
+    }
+    button.setAttribute('aria-pressed', mode === currentViewMode ? 'true' : 'false');
+  });
+};
+
+const setViewMode = (mode: ViewerMode) => {
+  if (currentViewMode === mode) {
+    return;
+  }
+  currentViewMode = mode;
+  updateViewModeControls();
+  updateViewerModeVisibility();
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
 };
 
 const togglePinnedHighlight = (sentenceId: string) => {
@@ -2946,6 +3321,63 @@ const renderPage = async (page: PDFPageProxy) => {
   }
 };
 
+const goToPdfPage = async (pageNumber: number) => {
+  if (!pdfDoc) {
+    return;
+  }
+  const totalPages = pdfDoc.numPages;
+  const clamped = Math.min(totalPages, Math.max(1, pageNumber));
+  if (currentPage?.pageNumber === clamped) {
+    return;
+  }
+
+  const navigationId = (pdfNavigationId += 1);
+  setStatus(`Rendering page ${clamped} of ${totalPages}...`);
+
+  const page = await pdfDoc.getPage(clamped);
+  if (navigationId !== pdfNavigationId) {
+    return;
+  }
+
+  currentPage = page;
+  setPageIndicator(clamped, totalPages);
+  await renderPage(page);
+  if (navigationId !== pdfNavigationId) {
+    return;
+  }
+
+  const cached = indexedPages.get(clamped);
+  if (cached && cached.source === 'pdf') {
+    currentPageTextMap = cached.textMap;
+    currentPageSentences = cached.sentences;
+    currentPageEmbeddings = cached.embeddings;
+    currentPageHighlightSentences = cached.highlights;
+  } else {
+    currentPageTextMap = await extractPageTextMap(page);
+    if (navigationId !== pdfNavigationId) {
+      return;
+    }
+    currentPageSentences = segmentPageText(currentPageTextMap, clamped);
+    currentPageEmbeddings = null;
+    updateAutoHighlights(currentPageSentences, null);
+    indexedPages.set(clamped, {
+      source: 'pdf',
+      pageNumber: clamped,
+      textMap: currentPageTextMap,
+      sentences: currentPageSentences,
+      highlights: currentPageHighlightSentences,
+      embeddings: null,
+    });
+  }
+
+  const highlightStats = renderHighlights();
+  renderStudyStrip();
+  if (currentViewMode === 'list') {
+    renderHighlightListView();
+  }
+  setStatus(`Rendered page ${clamped} of ${totalPages}. Highlighted ${highlightStats.sentences} sentences.`);
+};
+
 const loadPdf = async (file: File) => {
   if (!file.type.includes('pdf')) {
     setStatus('That file is not a PDF. Please choose a .pdf file.');
@@ -3020,6 +3452,14 @@ const bindDropzone = (zone: HTMLLabelElement | null, onFile: (file: File) => voi
     zone.classList.remove('is-dragover');
   });
 
+  zone.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    zone.click();
+  });
+
   zone.addEventListener('drop', (event) => {
     event.preventDefault();
     zone.classList.remove('is-dragover');
@@ -3029,6 +3469,69 @@ const bindDropzone = (zone: HTMLLabelElement | null, onFile: (file: File) => voi
     }
     onFile(file);
   });
+};
+
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  if (target.isContentEditable) {
+    return true;
+  }
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+    return true;
+  }
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+};
+
+const handleViewerKeydown = (event: KeyboardEvent) => {
+  if (!currentSourceKind) {
+    return;
+  }
+  if (isEditableTarget(event.target)) {
+    return;
+  }
+  const activeElement = document.activeElement;
+  if (activeElement && activeElement !== document.body && viewerStage && !viewerStage.contains(activeElement)) {
+    return;
+  }
+
+  const currentPageNumber = getCurrentPageNumber();
+  const totalPages = getTotalPages();
+  if (!currentPageNumber || !totalPages) {
+    return;
+  }
+
+  const isPdf = currentSourceKind === 'pdf';
+  const isReading =
+    currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text';
+  let nextPage: number | null = null;
+
+  if (event.key === 'Home') {
+    nextPage = 1;
+  } else if (event.key === 'End') {
+    nextPage = totalPages;
+  } else if (event.key === 'PageUp') {
+    nextPage = currentPageNumber - 1;
+  } else if (event.key === 'PageDown') {
+    nextPage = currentPageNumber + 1;
+  } else if (isPdf && event.key === 'ArrowLeft') {
+    nextPage = currentPageNumber - 1;
+  } else if (isPdf && event.key === 'ArrowRight') {
+    nextPage = currentPageNumber + 1;
+  }
+
+  if (!nextPage || nextPage < 1 || nextPage > totalPages) {
+    return;
+  }
+
+  event.preventDefault();
+  if (isPdf) {
+    void goToPdfPage(nextPage);
+  } else if (isReading) {
+    scrollToDocxPage(nextPage);
+  }
 };
 
 pdfInput?.addEventListener('change', (event) => {
@@ -3115,6 +3618,16 @@ highlightIntensityButtons.forEach((button) => {
   });
 });
 
+viewerModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const mode = button.dataset.viewMode as ViewerMode | undefined;
+    if (!mode) {
+      return;
+    }
+    setViewMode(mode);
+  });
+});
+
 downloadButton?.addEventListener('click', () => {
   void exportHighlightedPdf();
 });
@@ -3181,6 +3694,19 @@ studyStripList?.addEventListener('click', (event) => {
   togglePinnedHighlight(sentenceId);
 });
 
+highlightListView?.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const button = target.closest<HTMLButtonElement>('button[data-sentence-id]');
+  if (!button) {
+    return;
+  }
+  const sentenceId = button.dataset.sentenceId;
+  if (!sentenceId) {
+    return;
+  }
+  togglePinnedHighlight(sentenceId);
+});
+
 let docxScrollFrame = 0;
 docxViewer?.addEventListener('scroll', () => {
   if (currentSourceKind !== 'docx' && currentSourceKind !== 'url' && currentSourceKind !== 'text') {
@@ -3211,6 +3737,13 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
+window.addEventListener('keydown', handleViewerKeydown);
+attachContrastWatcher('(prefers-contrast: more)');
+attachContrastWatcher('(forced-colors: active)');
+
 updateHighlightModeControls();
 updateHighlightIntensityControls();
+updateViewModeControls();
+updateViewerModeVisibility();
+updateContrastState();
 renderStudyStrip();
