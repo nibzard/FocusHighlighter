@@ -282,7 +282,14 @@
       "id": "T022",
       "title": "Add privacy/security disclosures and HTML sanitization for rendered content",
       "priority": 3,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T23:07:42Z",
+      "details": "Added privacy/security disclosure panel and documented sanitization for reading view content.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T023",

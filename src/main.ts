@@ -71,6 +71,15 @@ app.innerHTML = `
             <span class="muted text-hint">Tip: Press Ctrl or Cmd + Enter to render.</span>
           </div>
         </div>
+        <div class="privacy-panel" aria-live="polite">
+          <p class="privacy-title">Privacy &amp; security</p>
+          <ul class="privacy-list">
+            <li>PDF, DOCX, and pasted text stay in your browser for highlighting.</li>
+            <li>URL fetching uses r.jina.ai (third-party) to extract readable text.</li>
+            <li>Rendered content is sanitized; scripts, embeds, and unsafe links are removed.</li>
+            <li>External links open in a new tab.</li>
+          </ul>
+        </div>
         <div class="upload-meta">
           <p id="file-name" class="meta-line">No file selected.</p>
           <p id="file-status" class="meta-line">Upload a PDF, DOCX, URL, or paste text to get started.</p>
@@ -1456,6 +1465,7 @@ const sanitizeDocxHref = (href: string) => {
   return null;
 };
 
+// Sanitize untrusted HTML from DOCX/URL/Text before rendering.
 const sanitizeDocxHtml = (html: string) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
