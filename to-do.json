@@ -81,7 +81,14 @@
       "id": "T006",
       "title": "Integrate Transformers.js embeddings pipeline with WebGPU/WASM fallback",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T20:22:45Z",
+      "details": "Added Transformers.js feature-extraction pipeline with WebGPU/WASM fallback and page 1 embedding prep.",
+      "files": [
+        "src/main.ts",
+        "package.json",
+        "to-do.json"
+      ]
     },
     {
       "id": "T007",

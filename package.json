@@ -10,6 +10,7 @@
     "lint": "eslint . --ext .ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "pdfjs-dist": "^4.0.379"
   },
   "devDependencies": {

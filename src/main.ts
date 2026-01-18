@@ -135,9 +135,36 @@ type SentenceSegmenterConstructor = new (
   options?: { granularity: 'sentence' },
 ) => SentenceSegmenter;
 
+type EmbeddingDevice = 'webgpu' | 'wasm';
+
+type EmbeddingPipeline = (
+  inputs: string[] | string,
+  options?: Record<string, unknown>,
+) => Promise<unknown>;
+
+type TransformersModule = {
+  pipeline: (task: string, model?: string, options?: Record<string, unknown>) => Promise<EmbeddingPipeline>;
+  env: {
+    allowLocalModels?: boolean;
+    backends?: {
+      onnx?: {
+        wasm?: {
+          numThreads?: number;
+        };
+      };
+    };
+  };
+};
+
+const embeddingModelId = 'Xenova/multilingual-e5-small';
+
 let currentPageTextMap: PageTextMap | null = null;
 let currentPageSentences: SentenceSegment[] = [];
 const maxHighlightSentences = 4;
+let embeddingPipelinePromise: Promise<EmbeddingPipeline> | null = null;
+let embeddingBackend: EmbeddingDevice | null = null;
+let embeddingRequestId = 0;
+let currentPageEmbeddings: unknown | null = null;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -153,6 +180,99 @@ const getSentenceSegmenter = (): SentenceSegmenter | null => {
 };
 
 const sentenceSegmenter = getSentenceSegmenter();
+
+const getEmbeddingDevice = (): EmbeddingDevice =>
+  typeof navigator !== 'undefined' && 'gpu' in navigator ? 'webgpu' : 'wasm';
+
+const formatEmbeddingDeviceLabel = (device: EmbeddingDevice) => (device === 'webgpu' ? 'WebGPU' : 'WASM');
+
+const configureTransformersEnv = (env: TransformersModule['env']) => {
+  if (!env || typeof env !== 'object') {
+    return;
+  }
+
+  env.allowLocalModels = false;
+
+  const threads =
+    typeof navigator !== 'undefined'
+      ? Math.max(1, Math.min(4, navigator.hardwareConcurrency ?? 4))
+      : 1;
+
+  const wasmConfig = env.backends?.onnx?.wasm;
+  if (wasmConfig) {
+    wasmConfig.numThreads = threads;
+  }
+};
+
+const createEmbeddingPipeline = async (device: EmbeddingDevice) => {
+  const { pipeline, env } = (await import('@huggingface/transformers')) as TransformersModule;
+  configureTransformersEnv(env);
+  const dtype = device === 'webgpu' ? 'q4' : 'q8';
+  const extractor = await pipeline('feature-extraction', embeddingModelId, { device, dtype });
+  return { extractor, device };
+};
+
+const getEmbeddingPipeline = async () => {
+  if (embeddingPipelinePromise) {
+    return embeddingPipelinePromise;
+  }
+
+  embeddingPipelinePromise = (async () => {
+    const preferredDevice = getEmbeddingDevice();
+    try {
+      const { extractor, device } = await createEmbeddingPipeline(preferredDevice);
+      embeddingBackend = device;
+      return extractor;
+    } catch (error) {
+      if (preferredDevice === 'webgpu') {
+        const { extractor, device } = await createEmbeddingPipeline('wasm');
+        embeddingBackend = device;
+        return extractor;
+      }
+      throw error;
+    }
+  })();
+
+  try {
+    return await embeddingPipelinePromise;
+  } catch (error) {
+    embeddingPipelinePromise = null;
+    embeddingBackend = null;
+    throw error;
+  }
+};
+
+const prepareEmbeddingInputs = (sentences: SentenceSegment[]) =>
+  sentences.map((sentence) => `passage: ${sentence.text}`);
+
+const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: string) => {
+  if (!sentences.length) {
+    return;
+  }
+
+  const requestId = ++embeddingRequestId;
+  const preferredDevice = getEmbeddingDevice();
+  setStatus(`${statusPrefix} Loading embeddings (${formatEmbeddingDeviceLabel(preferredDevice)})...`);
+
+  try {
+    const extractor = await getEmbeddingPipeline();
+    if (requestId !== embeddingRequestId) {
+      return;
+    }
+    const inputs = prepareEmbeddingInputs(sentences);
+    currentPageEmbeddings = await extractor(inputs, { pooling: 'none' });
+    const activeDevice = embeddingBackend ?? preferredDevice;
+    setStatus(
+      `${statusPrefix} Embeddings ready (${formatEmbeddingDeviceLabel(activeDevice)}) for ${sentences.length} sentences.`,
+    );
+  } catch (error) {
+    if (requestId !== embeddingRequestId) {
+      return;
+    }
+    console.error(error);
+    setStatus(`${statusPrefix} Embeddings failed to load.`);
+  }
+};
 
 const setStatus = (message: string) => {
   if (fileStatus) {
@@ -178,7 +298,9 @@ const resetViewer = () => {
   currentPage = null;
   currentPageTextMap = null;
   currentPageSentences = [];
+  currentPageEmbeddings = null;
   currentViewport = null;
+  embeddingRequestId += 1;
   if (viewerStage) {
     viewerStage.classList.remove('is-ready');
   }
@@ -491,9 +613,9 @@ const loadPdf = async (file: File) => {
     currentPageTextMap = await extractPageTextMap(currentPage);
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     const highlightStats = renderHighlights();
-    setStatus(
-      `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences, highlighted ${highlightStats.sentences} sentences.`,
-    );
+    const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences, highlighted ${highlightStats.sentences} sentences.`;
+    setStatus(statusPrefix);
+    void runPageEmbeddings(currentPageSentences, statusPrefix);
   } catch (error) {
     console.error(error);
     setStatus('Unable to render this PDF. Try another file.');
