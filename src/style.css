@@ -203,14 +203,39 @@ body {
 .docx-viewer {
   display: none;
   width: min(100%, 680px);
-  max-height: 520px;
+  height: min(520px, 70vh);
   overflow: auto;
-  padding: 18px 22px;
+  padding: 0;
   margin: 0 auto;
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 12px 30px -24px rgba(30, 22, 12, 0.5);
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 12px 30px -24px rgba(30, 22, 12, 0.35);
   line-height: 1.6;
+  --docx-page-padding: 22px;
+  --docx-page-height: 520px;
+}
+
+.docx-pages {
+  display: grid;
+  gap: 20px;
+  padding: 18px 20px 24px;
+}
+
+.docx-page {
+  min-height: var(--docx-page-height);
+  padding: var(--docx-page-padding);
+  border-radius: 12px;
+  border: 1px solid #efe3d2;
+  background: #fff;
+  box-shadow: 0 10px 24px -20px rgba(30, 22, 12, 0.35);
+}
+
+.docx-page-content > :first-child {
+  margin-top: 0;
+}
+
+.docx-page-content > :last-child {
+  margin-bottom: 0;
 }
 
 .docx-viewer h1,
@@ -237,6 +262,14 @@ body {
 
 .docx-viewer a {
   color: var(--accent-strong);
+}
+
+.docx-highlight {
+  background: rgba(255, 214, 104, 0.5);
+  border-radius: 4px;
+  padding: 0 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .highlight-layer {

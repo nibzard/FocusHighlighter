@@ -144,12 +144,20 @@ const pinnedHighlightIds = new Set<string>();
 type DocumentSourceKind = 'pdf' | 'docx' | null;
 let currentSourceKind: DocumentSourceKind = null;
 
-type IndexedPage = {
-  pageNumber: number;
-  textMap: PageTextMap;
-  sentences: SentenceSegment[];
-  highlights: SentenceSegment[];
-};
+type IndexedPage =
+  | {
+      source: 'pdf';
+      pageNumber: number;
+      textMap: PageTextMap;
+      sentences: SentenceSegment[];
+      highlights: SentenceSegment[];
+    }
+  | {
+      source: 'docx';
+      pageNumber: number;
+      sentences: SentenceSegment[];
+      highlights: SentenceSegment[];
+    };
 
 type PdfTextItem = {
   str: string;
@@ -196,6 +204,25 @@ type SentenceSegment = {
   charStart: number;
   charEnd: number;
   text: string;
+};
+
+type DocxBlock = {
+  element: HTMLElement;
+  text: string;
+  charStart: number;
+  charEnd: number;
+  paragraphIndex: number;
+};
+
+type DocxPage = {
+  pageNumber: number;
+  element: HTMLDivElement;
+  content: HTMLDivElement;
+};
+
+type DocxPageTextMap = {
+  fullText: string;
+  blocks: DocxBlock[];
 };
 
 type StudyStripSection = {
@@ -272,6 +299,8 @@ let embeddingBackend: EmbeddingDevice | null = null;
 let embeddingRequestId = 0;
 let currentPageEmbeddings: Float32Array[] | null = null;
 let currentPageHighlightSentences: SentenceSegment[] = [];
+let docxHtml: string | null = null;
+let docxPages: DocxPage[] = [];
 const indexedPages = new Map<number, IndexedPage>();
 let backgroundProcessId = 0;
 let backgroundProcessedPages = 0;
@@ -775,6 +804,8 @@ const resetViewer = () => {
   currentViewport = null;
   pdfBytes = null;
   currentFileName = null;
+  docxHtml = null;
+  docxPages = [];
   embeddingRequestId += 1;
   backgroundProcessId += 1;
   indexedPages.clear();
@@ -893,6 +924,365 @@ const sanitizeDocxHtml = (html: string) => {
   return doc.body.innerHTML.trim();
 };
 
+const docxBlockSelector = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th';
+
+const getDocxPageMetrics = () => {
+  const fallbackHeight = 520;
+  const fallbackPadding = 22;
+  if (!docxViewer) {
+    const contentHeight = Math.max(200, fallbackHeight - fallbackPadding * 2);
+    return { pageHeight: fallbackHeight, pageContentHeight: contentHeight };
+  }
+  const style = window.getComputedStyle(docxViewer);
+  const padding = Number.parseFloat(style.getPropertyValue('--docx-page-padding')) || fallbackPadding;
+  const pageHeight = Math.max(320, docxViewer.clientHeight || fallbackHeight);
+  const pageContentHeight = Math.max(200, pageHeight - padding * 2);
+  return { pageHeight, pageContentHeight };
+};
+
+const createDocxPage = (pageNumber: number, container: HTMLElement, pages: DocxPage[]) => {
+  const pageEl = document.createElement('section');
+  pageEl.className = 'docx-page';
+  pageEl.dataset.pageNumber = String(pageNumber);
+
+  const contentEl = document.createElement('div');
+  contentEl.className = 'docx-page-content';
+
+  pageEl.append(contentEl);
+  container.append(pageEl);
+
+  const page = { pageNumber, element: pageEl as HTMLDivElement, content: contentEl };
+  pages.push(page);
+  return page;
+};
+
+const paginateDocxHtml = (html: string) => {
+  if (!docxViewer) {
+    return [];
+  }
+
+  docxViewer.innerHTML = '';
+  const pagesContainer = document.createElement('div');
+  pagesContainer.className = 'docx-pages';
+  docxViewer.append(pagesContainer);
+
+  const scratch = document.createElement('div');
+  scratch.innerHTML = html;
+  const nodes = Array.from(scratch.childNodes).filter((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return Boolean(node.textContent?.trim());
+    }
+    return true;
+  });
+
+  if (nodes.length === 0) {
+    return [];
+  }
+
+  const { pageHeight, pageContentHeight } = getDocxPageMetrics();
+  docxViewer.style.setProperty('--docx-page-height', `${pageHeight}px`);
+
+  const pages: DocxPage[] = [];
+  let pageNumber = 1;
+  let currentPage = createDocxPage(pageNumber, pagesContainer, pages);
+
+  for (const node of nodes) {
+    currentPage.content.append(node);
+    const isOverflow = currentPage.content.scrollHeight > pageContentHeight;
+    if (isOverflow && currentPage.content.childNodes.length > 1) {
+      currentPage.content.removeChild(node);
+      pageNumber += 1;
+      currentPage = createDocxPage(pageNumber, pagesContainer, pages);
+      currentPage.content.append(node);
+    }
+  }
+
+  return pages;
+};
+
+const buildDocxPageTextMap = (pageContent: HTMLElement): DocxPageTextMap => {
+  const candidates = Array.from(pageContent.querySelectorAll<HTMLElement>(docxBlockSelector));
+  const leafBlocks = candidates.filter(
+    (element) => !candidates.some((other) => other !== element && element.contains(other)),
+  );
+  const blocks = leafBlocks.length > 0 ? leafBlocks : [pageContent];
+  const mappedBlocks: DocxBlock[] = [];
+  let fullText = '';
+  let paragraphIndex = 0;
+
+  for (const block of blocks) {
+    const text = block.textContent ?? '';
+    if (!text.trim()) {
+      continue;
+    }
+    const charStart = fullText.length;
+    fullText += text;
+    const charEnd = fullText.length;
+    mappedBlocks.push({ element: block, text, charStart, charEnd, paragraphIndex });
+    fullText += '\n\n';
+    paragraphIndex += 1;
+  }
+
+  return { fullText, blocks: mappedBlocks };
+};
+
+const segmentDocxPageText = (textMap: DocxPageTextMap, pageNumber: number): SentenceSegment[] => {
+  const sentences: SentenceSegment[] = [];
+  const paragraphRanges = getParagraphRanges(textMap.fullText);
+  let paragraphIndex = 0;
+
+  for (const range of paragraphRanges) {
+    const paragraphText = textMap.fullText.slice(range.start, range.end);
+    if (!paragraphText.trim()) {
+      continue;
+    }
+
+    const sentenceChunks = getSentenceChunks(paragraphText);
+    let sentenceIndex = 0;
+
+    for (const chunk of sentenceChunks) {
+      const rawText = chunk.text;
+      const leadingWhitespace = rawText.match(/^\s*/)?.[0].length ?? 0;
+      const trailingWhitespace = rawText.match(/\s*$/)?.[0].length ?? 0;
+      const trimmedText = rawText.slice(leadingWhitespace, rawText.length - trailingWhitespace);
+
+      if (!trimmedText) {
+        continue;
+      }
+
+      const charStart = range.start + chunk.index + leadingWhitespace;
+      const charEnd = range.start + chunk.index + rawText.length - trailingWhitespace;
+
+      sentences.push({
+        id: createSentenceId(pageNumber, paragraphIndex, sentenceIndex, charStart, charEnd),
+        page: pageNumber,
+        paragraphIndex,
+        sentenceIndex,
+        charStart,
+        charEnd,
+        text: trimmedText,
+      });
+      sentenceIndex += 1;
+    }
+
+    if (sentenceIndex > 0) {
+      paragraphIndex += 1;
+    }
+  }
+
+  return sentences;
+};
+
+const findTextNodePosition = (root: HTMLElement, offset: number) => {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let currentOffset = 0;
+  let lastNode: Text | null = null;
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const length = node.nodeValue?.length ?? 0;
+    if (currentOffset + length >= offset) {
+      return { node, offset: Math.max(0, Math.min(length, offset - currentOffset)) };
+    }
+    currentOffset += length;
+    lastNode = node;
+  }
+
+  if (lastNode) {
+    return { node: lastNode, offset: lastNode.nodeValue?.length ?? 0 };
+  }
+
+  return null;
+};
+
+const applyInlineHighlight = (block: HTMLElement, startOffset: number, endOffset: number, sentenceId: string) => {
+  if (startOffset >= endOffset) {
+    return false;
+  }
+
+  const startPosition = findTextNodePosition(block, startOffset);
+  const endPosition = findTextNodePosition(block, endOffset);
+  if (!startPosition || !endPosition) {
+    return false;
+  }
+
+  const range = document.createRange();
+  range.setStart(startPosition.node, startPosition.offset);
+  range.setEnd(endPosition.node, endPosition.offset);
+  if (range.collapsed) {
+    return false;
+  }
+
+  const highlight = document.createElement('span');
+  highlight.className = 'docx-highlight';
+  highlight.dataset.sentenceId = sentenceId;
+  highlight.append(range.extractContents());
+  range.insertNode(highlight);
+  range.detach();
+  return true;
+};
+
+const renderDocxPageHighlights = (
+  page: DocxPage,
+  textMap: DocxPageTextMap,
+  highlights: SentenceSegment[],
+) => {
+  if (!highlights.length) {
+    return 0;
+  }
+
+  const blockByParagraph = new Map<number, DocxBlock>();
+  for (const block of textMap.blocks) {
+    blockByParagraph.set(block.paragraphIndex, block);
+  }
+
+  let rendered = 0;
+  for (const sentence of highlights) {
+    const block = blockByParagraph.get(sentence.paragraphIndex);
+    if (!block) {
+      continue;
+    }
+    const startOffset = sentence.charStart - block.charStart;
+    const endOffset = sentence.charEnd - block.charStart;
+    if (startOffset < 0 || endOffset <= startOffset) {
+      continue;
+    }
+    if (applyInlineHighlight(block.element, startOffset, endOffset, sentence.id)) {
+      rendered += 1;
+    }
+  }
+
+  const pageElement = page.element;
+  if (pageElement) {
+    pageElement.dataset.highlightCount = String(rendered);
+  }
+
+  return rendered;
+};
+
+const indexDocxPage = async (page: DocxPage, processId: number) => {
+  const textMap = buildDocxPageTextMap(page.content);
+  const sentences = segmentDocxPageText(textMap, page.pageNumber);
+  let embeddings: Float32Array[] | null = null;
+
+  if (sentences.length) {
+    try {
+      embeddings = await computeEmbeddingsForSentences(sentences);
+    } catch (error) {
+      console.debug('Embedding failed for DOCX page', page.pageNumber, error);
+    }
+  }
+
+  if (processId !== backgroundProcessId) {
+    return null;
+  }
+
+  const highlights = selectAutoHighlights(sentences, embeddings);
+  renderDocxPageHighlights(page, textMap, highlights);
+  return { source: 'docx', pageNumber: page.pageNumber, sentences, highlights };
+};
+
+const startDocxIndexing = async (pages: DocxPage[], processId: number) => {
+  for (const page of pages) {
+    if (processId !== backgroundProcessId) {
+      return;
+    }
+
+    setProgress(
+      backgroundProcessedPages,
+      backgroundTotalPages,
+      `Indexing page ${page.pageNumber} of ${backgroundTotalPages}...`,
+    );
+
+    try {
+      const entry = await indexDocxPage(page, processId);
+      if (!entry) {
+        return;
+      }
+      indexedPages.set(entry.pageNumber, entry);
+      renderStudyStrip();
+    } catch (error) {
+      console.error('Failed to index DOCX page', page.pageNumber, error);
+    }
+
+    backgroundProcessedPages = Math.min(backgroundTotalPages, backgroundProcessedPages + 1);
+    setProgress(
+      backgroundProcessedPages,
+      backgroundTotalPages,
+      `Indexed ${backgroundProcessedPages} of ${backgroundTotalPages} pages.`,
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+};
+
+const updateDocxPageIndicator = () => {
+  if (!docxViewer || docxPages.length === 0) {
+    return;
+  }
+  const midpoint = docxViewer.scrollTop + docxViewer.clientHeight * 0.4;
+  let current = docxPages[0].pageNumber;
+
+  for (const page of docxPages) {
+    const top = page.element.offsetTop;
+    const bottom = top + page.element.offsetHeight;
+    if (midpoint >= top && midpoint <= bottom) {
+      current = page.pageNumber;
+      break;
+    }
+  }
+
+  setPageIndicator(current, docxPages.length);
+};
+
+const renderDocxDocument = async (html: string) => {
+  if (!docxViewer) {
+    return;
+  }
+
+  indexedPages.clear();
+  pinnedHighlightIds.clear();
+  renderStudyStrip();
+  docxPages = paginateDocxHtml(html);
+
+  if (docxPages.length === 0) {
+    docxViewer.innerHTML = '<p class="muted">No readable text found in this DOCX.</p>';
+    setPageIndicatorLabel('DOCX preview');
+    setStatus('DOCX loaded, but no readable text found.');
+    setProgress(0, 0, 'No readable text found.');
+    return;
+  }
+
+  const processId = backgroundProcessId;
+  backgroundTotalPages = docxPages.length;
+  backgroundProcessedPages = 0;
+  setProgress(0, backgroundTotalPages, `Preparing page 1 of ${backgroundTotalPages}...`);
+  setPageIndicator(1, backgroundTotalPages);
+  docxViewer.scrollTop = 0;
+
+  const firstPage = docxPages[0];
+  setStatus('Highlighting DOCX page 1...');
+  const firstEntry = await indexDocxPage(firstPage, processId);
+  if (!firstEntry) {
+    return;
+  }
+  indexedPages.set(firstEntry.pageNumber, firstEntry);
+  renderStudyStrip();
+  backgroundProcessedPages = 1;
+
+  const statusPrefix = `DOCX page 1 highlighted with ${firstEntry.highlights.length} sentences.`;
+  setStatus(statusPrefix);
+  const progressMessage =
+    backgroundTotalPages > 1
+      ? 'Page 1 ready. Indexing remaining pages...'
+      : 'Single-page DOCX ready.';
+  setProgress(backgroundProcessedPages, backgroundTotalPages, progressMessage);
+  updateDocxPageIndicator();
+
+  if (backgroundTotalPages > 1) {
+    void startDocxIndexing(docxPages.slice(1), processId);
+  }
+};
+
 const loadDocx = async (file: File) => {
   if (!isDocxFile(file)) {
     setStatus('That file is not a DOCX. Please choose a .docx file.');
@@ -913,16 +1303,11 @@ const loadDocx = async (file: File) => {
       console.debug('Mammoth conversion messages', result.messages);
     }
     const sanitizedHtml = sanitizeDocxHtml(result.value ?? '');
-    if (docxViewer) {
-      docxViewer.innerHTML =
-        sanitizedHtml || '<p class="muted">No readable text found in this DOCX.</p>';
-      docxViewer.scrollTop = 0;
-    }
+    docxHtml = sanitizedHtml;
     setViewerMode('docx');
-    renderStudyStrip();
-    setPageIndicatorLabel('DOCX preview');
-    setStatus('DOCX loaded into reading view.');
-    setProgress(0, 0, 'DOCX ready. Highlights coming soon.');
+    setStatus('Paginating DOCX into pages...');
+    setProgress(0, 0, 'Preparing DOCX pages...');
+    await renderDocxDocument(docxHtml ?? '');
   } catch (error) {
     console.error(error);
     setStatus('Unable to render this DOCX. Try another file.');
@@ -1670,6 +2055,9 @@ const exportHighlightedPdf = async () => {
     const entries = Array.from(indexedPages.values()).sort((a, b) => a.pageNumber - b.pageNumber);
 
     for (const entry of entries) {
+      if (entry.source !== 'pdf') {
+        continue;
+      }
       if (entry.pageNumber < 1 || entry.pageNumber > pdfPages.length) {
         continue;
       }
@@ -1745,7 +2133,7 @@ const indexPdfPage = async (
   }
 
   const highlights = selectAutoHighlights(sentences, embeddings);
-  return { pageNumber, textMap, sentences, highlights };
+  return { source: 'pdf', pageNumber, textMap, sentences, highlights };
 };
 
 const startBackgroundIndexing = async (
@@ -1873,6 +2261,7 @@ const loadPdf = async (file: File) => {
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     updateAutoHighlights(currentPageSentences, null);
     indexedPages.set(currentPage.pageNumber, {
+      source: 'pdf',
       pageNumber: currentPage.pageNumber,
       textMap: currentPageTextMap,
       sentences: currentPageSentences,
@@ -2020,15 +2409,33 @@ studyStripList?.addEventListener('click', (event) => {
   togglePinnedHighlight(sentenceId);
 });
 
-window.addEventListener('resize', () => {
-  if (!currentPage) {
+let docxScrollFrame = 0;
+docxViewer?.addEventListener('scroll', () => {
+  if (currentSourceKind !== 'docx') {
     return;
   }
+  if (docxScrollFrame) {
+    window.cancelAnimationFrame(docxScrollFrame);
+  }
+  docxScrollFrame = window.requestAnimationFrame(() => {
+    docxScrollFrame = 0;
+    updateDocxPageIndicator();
+  });
+});
+
+window.addEventListener('resize', () => {
   window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(() => {
-    void renderPage(currentPage).then(() => {
-      renderHighlights();
-    });
+    if (currentSourceKind === 'pdf' && currentPage) {
+      void renderPage(currentPage).then(() => {
+        renderHighlights();
+      });
+      return;
+    }
+    if (currentSourceKind === 'docx' && docxHtml) {
+      backgroundProcessId += 1;
+      void renderDocxDocument(docxHtml);
+    }
   }, 150);
 });
 
