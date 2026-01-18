@@ -122,6 +122,15 @@ body {
   background: rgba(255, 255, 255, 0.75);
 }
 
+.text-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.75);
+}
+
 .url-label {
   font-weight: 600;
   color: var(--ink);
@@ -146,9 +155,40 @@ body {
   color: var(--ink);
 }
 
+.text-input {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 0.92rem;
+  font-family: inherit;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
 .url-input:focus {
   outline: 2px solid rgba(224, 122, 46, 0.2);
   border-color: var(--accent);
+}
+
+.text-input:focus {
+  outline: 2px solid rgba(224, 122, 46, 0.2);
+  border-color: var(--accent);
+}
+
+.text-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.text-hint {
+  margin: 0;
+  font-size: 0.82rem;
 }
 
 .secondary-button {

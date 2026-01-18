@@ -211,7 +211,14 @@
       "id": "T016",
       "title": "Implement paste-text input flow with virtual page rendering",
       "priority": 2,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T22:09:22Z",
+      "details": "Added paste-text input flow with virtual page rendering and study strip support.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T017",

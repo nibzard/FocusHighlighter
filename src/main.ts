@@ -13,9 +13,9 @@ app.innerHTML = `
   <main class="shell">
     <header class="hero">
       <p class="eyebrow">FocusHighlighter</p>
-      <h1>Drop a PDF or Word doc. See page 1 instantly.</h1>
+      <h1>Drop a PDF or Word doc. Paste a URL or text. See page 1 instantly.</h1>
       <p class="lede">
-        Upload a PDF to render page 1 with highlights, open a DOCX for a clean reading view, or fetch a URL.
+        Upload a PDF to render page 1 with highlights, open a DOCX for a clean reading view, fetch a URL, or paste text.
       </p>
     </header>
     <section class="stage">
@@ -24,6 +24,7 @@ app.innerHTML = `
           <h2>Document upload</h2>
           <p class="muted">
             PDFs render page 1 with highlights. DOCX files open a sanitized reading view. URLs fetch through r.jina.ai.
+            Paste text for a private reading view.
           </p>
         </div>
         <div class="upload-options">
@@ -57,9 +58,22 @@ app.innerHTML = `
           </div>
           <p class="muted url-note">Fetched through r.jina.ai for readability.</p>
         </div>
+        <div class="text-panel">
+          <label class="url-label" for="text-input">Paste text</label>
+          <textarea
+            id="text-input"
+            class="text-input"
+            rows="6"
+            placeholder="Paste or type your reading here"
+          ></textarea>
+          <div class="text-actions">
+            <button id="text-render" class="secondary-button" type="button">Render text</button>
+            <span class="muted text-hint">Tip: Press Ctrl or Cmd + Enter to render.</span>
+          </div>
+        </div>
         <div class="upload-meta">
           <p id="file-name" class="meta-line">No file selected.</p>
-          <p id="file-status" class="meta-line">Upload a PDF, DOCX, or URL to get started.</p>
+          <p id="file-status" class="meta-line">Upload a PDF, DOCX, URL, or paste text to get started.</p>
         </div>
       </article>
       <article class="viewer-card">
@@ -118,7 +132,7 @@ app.innerHTML = `
         </p>
       </div>
       <div id="study-strip-list" class="strip-list" role="list"></div>
-      <p id="study-strip-empty" class="muted strip-empty">Upload a PDF, DOCX, or URL to populate the study strip.</p>
+      <p id="study-strip-empty" class="muted strip-empty">Upload a PDF, DOCX, URL, or text to populate the study strip.</p>
     </section>
   </main>
 `;
@@ -127,6 +141,8 @@ const pdfInput = document.querySelector<HTMLInputElement>('#pdf-input');
 const docxInput = document.querySelector<HTMLInputElement>('#docx-input');
 const urlInput = document.querySelector<HTMLInputElement>('#url-input');
 const urlFetchButton = document.querySelector<HTMLButtonElement>('#url-fetch');
+const textInput = document.querySelector<HTMLTextAreaElement>('#text-input');
+const textRenderButton = document.querySelector<HTMLButtonElement>('#text-render');
 const pdfDropzone = document.querySelector<HTMLLabelElement>('#pdf-dropzone');
 const docxDropzone = document.querySelector<HTMLLabelElement>('#docx-dropzone');
 const fileName = document.querySelector<HTMLParagraphElement>('#file-name');
@@ -158,9 +174,9 @@ let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
 let pdfBytes: ArrayBuffer | null = null;
 let currentFileName: string | null = null;
 const pinnedHighlightIds = new Set<string>();
-type DocumentSourceKind = 'pdf' | 'docx' | 'url' | null;
+type DocumentSourceKind = 'pdf' | 'docx' | 'url' | 'text' | null;
 let currentSourceKind: DocumentSourceKind = null;
-type ReadingSourceKind = 'docx' | 'url';
+type ReadingSourceKind = 'docx' | 'url' | 'text';
 
 type IndexedPage =
   | {
@@ -803,7 +819,7 @@ const setViewerMode = (mode: DocumentSourceKind) => {
     return;
   }
   viewerStage.classList.toggle('is-ready', mode !== null);
-  viewerStage.classList.toggle('is-docx', mode === 'docx' || mode === 'url');
+  viewerStage.classList.toggle('is-docx', mode === 'docx' || mode === 'url' || mode === 'text');
 };
 
 const resetProgress = () => {
@@ -942,7 +958,15 @@ const sanitizeDocxHtml = (html: string) => {
   return doc.body.innerHTML.trim();
 };
 
-const getReadingLabel = (sourceKind: ReadingSourceKind) => (sourceKind === 'url' ? 'URL' : 'DOCX');
+const getReadingLabel = (sourceKind: ReadingSourceKind) => {
+  if (sourceKind === 'url') {
+    return 'URL';
+  }
+  if (sourceKind === 'text') {
+    return 'Text';
+  }
+  return 'DOCX';
+};
 
 const escapeHtml = (value: string) =>
   value
@@ -1153,6 +1177,21 @@ const renderMarkdownToHtml = (markdown: string, baseUrl: URL | null) => {
   }
 
   return output.join('\n');
+};
+
+const renderPlainTextToHtml = (text: string) => {
+  const normalized = text.replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    return '';
+  }
+  const paragraphs = normalized.split(/\n{2,}/);
+  return paragraphs
+    .map((paragraph) => {
+      const lines = paragraph.split('\n');
+      const htmlLines = lines.map((line) => escapeHtml(line)).join('<br />');
+      return `<p>${htmlLines}</p>`;
+    })
+    .join('\n');
 };
 
 const formatUrlDisplayName = (url: URL) => {
@@ -1651,6 +1690,29 @@ const loadUrl = async (input: string) => {
       urlInput.disabled = false;
     }
   }
+};
+
+const loadText = async (input: string) => {
+  const normalized = input.replace(/\r\n/g, '\n');
+  const trimmed = normalized.trim();
+  if (!trimmed) {
+    setStatus('Paste some text to render.');
+    return;
+  }
+
+  resetViewer();
+  setFileName('Pasted text');
+  currentFileName = 'Pasted text';
+  setStatus('Preparing pasted text...');
+  setProgress(0, 0, 'Preparing pasted text...');
+
+  const renderedHtml = renderPlainTextToHtml(normalized);
+  const sanitizedHtml = sanitizeDocxHtml(renderedHtml);
+  docxHtml = sanitizedHtml;
+  setViewerMode('text');
+  setStatus('Paginating pasted text into pages...');
+  setProgress(0, 0, 'Preparing text pages...');
+  await renderDocxDocument(docxHtml ?? '', 'text');
 };
 
 const isPdfTextItem = (item: PdfTextItem | PdfTextMarkedContent): item is PdfTextItem =>
@@ -2303,10 +2365,12 @@ const renderStudyStrip = () => {
       studyStripEmpty.textContent = 'DOCX highlights will appear here once available.';
     } else if (currentSourceKind === 'url') {
       studyStripEmpty.textContent = 'URL highlights will appear here once available.';
+    } else if (currentSourceKind === 'text') {
+      studyStripEmpty.textContent = 'Text highlights will appear here once available.';
     } else {
       studyStripEmpty.textContent =
         indexedPages.size === 0
-          ? 'Upload a PDF, DOCX, or URL to populate the study strip.'
+          ? 'Upload a PDF, DOCX, URL, or text to populate the study strip.'
           : 'No highlights available yet.';
     }
     studyStripEmpty.hidden = false;
@@ -2687,6 +2751,24 @@ urlInput?.addEventListener('keydown', (event) => {
   void loadUrl(urlInput.value);
 });
 
+textRenderButton?.addEventListener('click', () => {
+  if (!textInput) {
+    return;
+  }
+  void loadText(textInput.value);
+});
+
+textInput?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  if (!event.metaKey && !event.ctrlKey) {
+    return;
+  }
+  event.preventDefault();
+  void loadText(textInput.value);
+});
+
 bindDropzone(pdfDropzone, (file) => {
   void loadPdf(file);
 });
@@ -2763,7 +2845,7 @@ studyStripList?.addEventListener('click', (event) => {
 
 let docxScrollFrame = 0;
 docxViewer?.addEventListener('scroll', () => {
-  if (currentSourceKind !== 'docx' && currentSourceKind !== 'url') {
+  if (currentSourceKind !== 'docx' && currentSourceKind !== 'url' && currentSourceKind !== 'text') {
     return;
   }
   if (docxScrollFrame) {
@@ -2784,7 +2866,7 @@ window.addEventListener('resize', () => {
       });
       return;
     }
-    if ((currentSourceKind === 'docx' || currentSourceKind === 'url') && docxHtml) {
+    if ((currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') && docxHtml) {
       backgroundProcessId += 1;
       void renderDocxDocument(docxHtml, currentSourceKind);
     }
