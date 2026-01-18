@@ -425,6 +425,24 @@ type EmbeddingPipeline = ((
   tokenizer?: EmbeddingTokenizer;
 };
 
+type EmbeddingWorkerRequest = {
+  type: 'embed';
+  id: number;
+  inputs: string[];
+  device: EmbeddingDevice;
+  batchSize: number;
+};
+
+type EmbeddingWorkerResponse = {
+  type: 'embed-result';
+  id: number;
+  device: EmbeddingDevice;
+  count: number;
+  dim: number;
+  buffer: ArrayBuffer;
+  error?: string;
+};
+
 type TransformersModule = {
   pipeline: (task: string, model?: string, options?: Record<string, unknown>) => Promise<EmbeddingPipeline>;
   env: {
@@ -440,6 +458,16 @@ type TransformersModule = {
 };
 
 const embeddingModelId = 'Xenova/multilingual-e5-small';
+
+const performanceLimits = {
+  maxAutoPages: 200,
+  maxSentences: 20000,
+  embeddingBatch: {
+    webgpu: { min: 12, max: 48 },
+    wasm: { min: 4, max: 16 },
+  },
+  workerSentenceThreshold: 12,
+};
 
 let currentPageTextMap: PageTextMap | null = null;
 let currentPageSentences: SentenceSegment[] = [];
@@ -475,6 +503,16 @@ let currentViewMode: ViewerMode = 'preview';
 const highlightMmrLambda = 0.35;
 let embeddingPipelinePromise: Promise<EmbeddingPipeline> | null = null;
 let embeddingBackend: EmbeddingDevice | null = null;
+let embeddingWorker: Worker | null = null;
+let embeddingWorkerFailed = false;
+let embeddingWorkerRequestId = 0;
+const embeddingWorkerRequests = new Map<
+  number,
+  {
+    resolve: (result: { embeddings: Float32Array[]; device: EmbeddingDevice } | null) => void;
+    reject: (error: Error) => void;
+  }
+>();
 let embeddingRequestId = 0;
 let currentPageEmbeddings: Float32Array[] | null = null;
 let currentPageHighlightSentences: SentenceSegment[] = [];
@@ -486,6 +524,8 @@ let backgroundProcessId = 0;
 let backgroundProcessedPages = 0;
 let backgroundTotalPages = 0;
 let pdfNavigationId = 0;
+let autoSentenceCount = 0;
+let autoSentenceCapReached = false;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -506,6 +546,62 @@ const getEmbeddingDevice = (): EmbeddingDevice =>
   typeof navigator !== 'undefined' && 'gpu' in navigator ? 'webgpu' : 'wasm';
 
 const formatEmbeddingDeviceLabel = (device: EmbeddingDevice) => (device === 'webgpu' ? 'WebGPU' : 'WASM');
+
+const yieldToUi = () =>
+  new Promise<void>((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve();
+      return;
+    }
+    const idle = (
+      window as { requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number }
+    ).requestIdleCallback;
+    if (typeof idle === 'function') {
+      idle(() => resolve(), { timeout: 120 });
+      return;
+    }
+    window.setTimeout(resolve, 0);
+  });
+
+const appendNote = (message: string, note: string | null) => (note ? `${message} ${note}` : message);
+
+const getAutoPageLimit = (totalPages: number) => {
+  const cappedTotalPages = Math.min(totalPages, performanceLimits.maxAutoPages);
+  return { cappedTotalPages, isCapped: totalPages > cappedTotalPages };
+};
+
+const getAutoPageNote = (totalPages: number, cappedTotalPages: number) =>
+  totalPages > cappedTotalPages
+    ? `Auto-highlighting first ${cappedTotalPages} of ${totalPages} pages.`
+    : null;
+
+const getSentenceCapMessage = () =>
+  `Auto-highlighting paused after ${performanceLimits.maxSentences} sentences to keep things fast.`;
+
+const clampSentencesForAutoIndexing = (sentences: SentenceSegment[]) => {
+  const remaining = performanceLimits.maxSentences - autoSentenceCount;
+  if (remaining <= 0) {
+    autoSentenceCapReached = true;
+    return { sentences: [] as SentenceSegment[], capped: true };
+  }
+  if (sentences.length > remaining) {
+    autoSentenceCapReached = true;
+    return { sentences: sentences.slice(0, remaining), capped: true };
+  }
+  return { sentences, capped: false };
+};
+
+const registerAutoSentenceCount = (count: number) => {
+  autoSentenceCount = Math.min(performanceLimits.maxSentences, autoSentenceCount + count);
+};
+
+const getEmbeddingBatchSize = (device: EmbeddingDevice, total: number) => {
+  const config = performanceLimits.embeddingBatch[device];
+  const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?? 4 : 4;
+  const scaled = Math.round(cores * (device === 'webgpu' ? 6 : 2));
+  const batchSize = Math.min(config.max, Math.max(config.min, scaled));
+  return Math.max(1, Math.min(total, batchSize));
+};
 
 const configureTransformersEnv = (env: TransformersModule['env']) => {
   if (!env || typeof env !== 'object') {
@@ -561,6 +657,109 @@ const getEmbeddingPipeline = async () => {
     embeddingBackend = null;
     throw error;
   }
+};
+
+const inflateWorkerEmbeddings = (buffer: ArrayBuffer, count: number, dim: number) => {
+  if (!buffer || count <= 0 || dim <= 0) {
+    return null;
+  }
+  const data = new Float32Array(buffer);
+  if (data.length < count * dim) {
+    return null;
+  }
+  const embeddings: Float32Array[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const start = index * dim;
+    embeddings.push(data.subarray(start, start + dim));
+  }
+  return embeddings;
+};
+
+const handleEmbeddingWorkerMessage = (event: MessageEvent<EmbeddingWorkerResponse>) => {
+  const message = event.data;
+  if (!message || message.type !== 'embed-result') {
+    return;
+  }
+  const pending = embeddingWorkerRequests.get(message.id);
+  if (!pending) {
+    return;
+  }
+  embeddingWorkerRequests.delete(message.id);
+  if (message.error) {
+    pending.reject(new Error(message.error));
+    return;
+  }
+  const embeddings = inflateWorkerEmbeddings(message.buffer, message.count, message.dim);
+  if (!embeddings) {
+    pending.reject(new Error('Embedding worker returned invalid data.'));
+    return;
+  }
+  pending.resolve({ embeddings, device: message.device });
+};
+
+const failEmbeddingWorkerRequests = (error: Error) => {
+  embeddingWorkerRequests.forEach((pending) => pending.reject(error));
+  embeddingWorkerRequests.clear();
+};
+
+const getEmbeddingWorker = () => {
+  if (embeddingWorkerFailed || typeof Worker === 'undefined') {
+    return null;
+  }
+  if (embeddingWorker) {
+    return embeddingWorker;
+  }
+  try {
+    embeddingWorker = new Worker(new URL('./embedding.worker.ts', import.meta.url), { type: 'module' });
+    embeddingWorker.addEventListener('message', handleEmbeddingWorkerMessage);
+    embeddingWorker.addEventListener('error', (event) => {
+      embeddingWorkerFailed = true;
+      const error =
+        event instanceof ErrorEvent && event.error instanceof Error
+          ? event.error
+          : new Error('Embedding worker failed.');
+      failEmbeddingWorkerRequests(error);
+    });
+  } catch (error) {
+    embeddingWorkerFailed = true;
+    return null;
+  }
+  return embeddingWorker;
+};
+
+const requestEmbeddingsFromWorker = async (
+  inputs: string[],
+  device: EmbeddingDevice,
+  batchSize: number,
+) => {
+  const worker = getEmbeddingWorker();
+  if (!worker) {
+    return null;
+  }
+  return new Promise<{ embeddings: Float32Array[]; device: EmbeddingDevice } | null>(
+    (resolve, reject) => {
+      const id = (embeddingWorkerRequestId += 1);
+      embeddingWorkerRequests.set(id, { resolve, reject });
+      const payload: EmbeddingWorkerRequest = {
+        type: 'embed',
+        id,
+        inputs,
+        device,
+        batchSize,
+      };
+      worker.postMessage(payload);
+    },
+  );
+};
+
+const shouldUseEmbeddingWorker = (allowWorker: boolean, sentenceCount: number) => {
+  if (!allowWorker) {
+    return false;
+  }
+  if (sentenceCount < performanceLimits.workerSentenceThreshold) {
+    return false;
+  }
+  return Boolean(getEmbeddingWorker());
 };
 
 const prepareEmbeddingInputs = (sentences: SentenceSegment[]) =>
@@ -808,28 +1007,53 @@ const poolTokenEmbeddings = (
   return pooled;
 };
 
-const computeEmbeddingsForSentences = async (sentences: SentenceSegment[]) => {
+const computeEmbeddingsForSentences = async (
+  sentences: SentenceSegment[],
+  options: { allowWorker?: boolean } = {},
+) => {
   if (!sentences.length) {
     return null;
   }
 
-  const extractor = await getEmbeddingPipeline();
   const inputs = prepareEmbeddingInputs(sentences);
-  const tokenEmbeddings = await extractor(inputs, { pooling: 'none' });
+  const preferredDevice = getEmbeddingDevice();
+  const batchSize = getEmbeddingBatchSize(preferredDevice, inputs.length);
+  const workerDevice = preferredDevice === 'webgpu' ? 'wasm' : preferredDevice;
+  const workerBatchSize = getEmbeddingBatchSize(workerDevice, inputs.length);
 
-  const tokenBatch = extractTokenEmbeddings(tokenEmbeddings);
-  if (!tokenBatch) {
-    return null;
+  if (shouldUseEmbeddingWorker(Boolean(options.allowWorker), inputs.length)) {
+    try {
+      const workerResult = await requestEmbeddingsFromWorker(inputs, workerDevice, workerBatchSize);
+      if (workerResult?.embeddings) {
+        embeddingBackend = workerResult.device;
+        return workerResult.embeddings;
+      }
+    } catch (error) {
+      console.debug('Embedding worker failed, falling back to main thread.', error);
+    }
   }
 
-  const attentionMask = await getAttentionMask(
-    extractor,
-    inputs,
-    tokenBatch.batchSize,
-    tokenBatch.sequenceLength,
-  );
+  const extractor = await getEmbeddingPipeline();
+  const pooledEmbeddings: Float32Array[] = [];
 
-  return poolTokenEmbeddings(tokenBatch, attentionMask);
+  for (let offset = 0; offset < inputs.length; offset += batchSize) {
+    const batchInputs = inputs.slice(offset, offset + batchSize);
+    const tokenEmbeddings = await extractor(batchInputs, { pooling: 'none' });
+    const tokenBatch = extractTokenEmbeddings(tokenEmbeddings);
+    if (!tokenBatch) {
+      return null;
+    }
+    const attentionMask = await getAttentionMask(
+      extractor,
+      batchInputs,
+      tokenBatch.batchSize,
+      tokenBatch.sequenceLength,
+    );
+    pooledEmbeddings.push(...poolTokenEmbeddings(tokenBatch, attentionMask));
+    await yieldToUi();
+  }
+
+  return pooledEmbeddings;
 };
 
 const cosineSimilarity = (a: ArrayLike<number>, b: ArrayLike<number>) => {
@@ -866,7 +1090,7 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
   setStatus(`${statusPrefix} Loading embeddings (${formatEmbeddingDeviceLabel(preferredDevice)})...`);
 
   try {
-    const pooledEmbeddings = await computeEmbeddingsForSentences(sentences);
+    const pooledEmbeddings = await computeEmbeddingsForSentences(sentences, { allowWorker: false });
     if (requestId !== embeddingRequestId) {
       return;
     }
@@ -912,6 +1136,12 @@ const setStatus = (message: string) => {
   if (fileStatus) {
     fileStatus.textContent = message;
   }
+};
+
+const notifySentenceCap = () => {
+  const message = getSentenceCapMessage();
+  setStatus(message);
+  setProgress(backgroundProcessedPages, backgroundTotalPages, message);
 };
 
 const setFileName = (name: string) => {
@@ -1035,6 +1265,8 @@ const resetViewer = () => {
   currentDocxPageNumber = 1;
   embeddingRequestId += 1;
   backgroundProcessId += 1;
+  autoSentenceCount = 0;
+  autoSentenceCapReached = false;
   indexedPages.clear();
   resetProgress();
   setExportEnabled(false);
@@ -1825,14 +2057,24 @@ const renderDocxPageHighlights = (
   return rendered;
 };
 
-const indexDocxPage = async (page: DocxPage, processId: number, sourceKind: ReadingSourceKind) => {
+const indexDocxPage = async (
+  page: DocxPage,
+  processId: number,
+  sourceKind: ReadingSourceKind,
+  allowWorker: boolean,
+) => {
   const textMap = buildDocxPageTextMap(page.content);
   const sentences = segmentDocxPageText(textMap, page.pageNumber);
+  const capped = clampSentencesForAutoIndexing(sentences);
+  const effectiveSentences = capped.sentences;
+  if (sentences.length > 0 && effectiveSentences.length === 0) {
+    return null;
+  }
   let embeddings: Float32Array[] | null = null;
 
-  if (sentences.length) {
+  if (effectiveSentences.length) {
     try {
-      embeddings = await computeEmbeddingsForSentences(sentences);
+      embeddings = await computeEmbeddingsForSentences(effectiveSentences, { allowWorker });
     } catch (error) {
       console.debug(`Embedding failed for ${getReadingLabel(sourceKind)} page`, page.pageNumber, error);
     }
@@ -1842,9 +2084,16 @@ const indexDocxPage = async (page: DocxPage, processId: number, sourceKind: Read
     return null;
   }
 
-  const highlights = selectAutoHighlights(sentences, embeddings);
+  const highlights = selectAutoHighlights(effectiveSentences, embeddings);
   renderDocxPageHighlights(page, textMap, highlights);
-  return { source: sourceKind, pageNumber: page.pageNumber, sentences, highlights, embeddings };
+  registerAutoSentenceCount(effectiveSentences.length);
+  return {
+    source: sourceKind,
+    pageNumber: page.pageNumber,
+    sentences: effectiveSentences,
+    highlights,
+    embeddings,
+  };
 };
 
 const startDocxIndexing = async (
@@ -1856,6 +2105,10 @@ const startDocxIndexing = async (
     if (processId !== backgroundProcessId) {
       return;
     }
+    if (autoSentenceCapReached) {
+      notifySentenceCap();
+      return;
+    }
 
     setProgress(
       backgroundProcessedPages,
@@ -1864,8 +2117,11 @@ const startDocxIndexing = async (
     );
 
     try {
-      const entry = await indexDocxPage(page, processId, sourceKind);
+      const entry = await indexDocxPage(page, processId, sourceKind, true);
       if (!entry) {
+        if (autoSentenceCapReached) {
+          notifySentenceCap();
+        }
         return;
       }
       indexedPages.set(entry.pageNumber, entry);
@@ -1880,7 +2136,11 @@ const startDocxIndexing = async (
       backgroundTotalPages,
       `Indexed ${backgroundProcessedPages} of ${backgroundTotalPages} pages.`,
     );
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    if (autoSentenceCapReached) {
+      notifySentenceCap();
+      return;
+    }
+    await yieldToUi();
   }
 };
 
@@ -1944,17 +2204,27 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
     return;
   }
 
+  const { cappedTotalPages } = getAutoPageLimit(docxPages.length);
+  const pageCapNote = getAutoPageNote(docxPages.length, cappedTotalPages);
+  const autoIndexedPages = docxPages.slice(0, cappedTotalPages);
   const processId = backgroundProcessId;
-  backgroundTotalPages = docxPages.length;
+  backgroundTotalPages = cappedTotalPages;
   backgroundProcessedPages = 0;
-  setProgress(0, backgroundTotalPages, `Preparing page 1 of ${backgroundTotalPages}...`);
-  setPageIndicator(1, backgroundTotalPages);
+  setProgress(
+    0,
+    backgroundTotalPages,
+    appendNote(`Preparing page 1 of ${backgroundTotalPages}...`, pageCapNote),
+  );
+  setPageIndicator(1, docxPages.length);
   docxViewer.scrollTop = 0;
 
-  const firstPage = docxPages[0];
+  const firstPage = autoIndexedPages[0];
   setStatus(`Highlighting ${sourceLabel} page 1...`);
-  const firstEntry = await indexDocxPage(firstPage, processId, sourceKind);
+  const firstEntry = await indexDocxPage(firstPage, processId, sourceKind, false);
   if (!firstEntry) {
+    if (autoSentenceCapReached) {
+      notifySentenceCap();
+    }
     return;
   }
   indexedPages.set(firstEntry.pageNumber, firstEntry);
@@ -1968,11 +2238,16 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
     backgroundTotalPages > 1
       ? 'Page 1 ready. Indexing remaining pages...'
       : `Single-page ${sourceLabel} ready.`;
-  setProgress(backgroundProcessedPages, backgroundTotalPages, progressMessage);
+  setProgress(backgroundProcessedPages, backgroundTotalPages, appendNote(progressMessage, pageCapNote));
   updateDocxPageIndicator();
 
+  if (autoSentenceCapReached) {
+    notifySentenceCap();
+    return;
+  }
+
   if (backgroundTotalPages > 1) {
-    void startDocxIndexing(docxPages.slice(1), processId, sourceKind);
+    void startDocxIndexing(autoIndexedPages.slice(1), processId, sourceKind);
   }
 };
 
@@ -3091,7 +3366,7 @@ const exportReadingViewPdf = async () => {
       const png = await pdfDocument.embedPng(imageBytes);
       const pdfPage = pdfDocument.addPage([png.width, png.height]);
       pdfPage.drawImage(png, { x: 0, y: 0, width: png.width, height: png.height });
-      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await yieldToUi();
     }
 
     const outputBytes = await pdfDocument.save();
@@ -3209,11 +3484,16 @@ const indexPdfPage = async (
   }
 
   const sentences = segmentPageText(textMap, pageNumber);
+  const capped = clampSentencesForAutoIndexing(sentences);
+  const effectiveSentences = capped.sentences;
+  if (sentences.length > 0 && effectiveSentences.length === 0) {
+    return null;
+  }
   let embeddings: Float32Array[] | null = null;
 
-  if (sentences.length) {
+  if (effectiveSentences.length) {
     try {
-      embeddings = await computeEmbeddingsForSentences(sentences);
+      embeddings = await computeEmbeddingsForSentences(effectiveSentences, { allowWorker: true });
     } catch (error) {
       console.debug('Embedding failed for page', pageNumber, error);
     }
@@ -3222,8 +3502,16 @@ const indexPdfPage = async (
     }
   }
 
-  const highlights = selectAutoHighlights(sentences, embeddings);
-  return { source: 'pdf', pageNumber, textMap, sentences, highlights, embeddings };
+  const highlights = selectAutoHighlights(effectiveSentences, embeddings);
+  registerAutoSentenceCount(effectiveSentences.length);
+  return {
+    source: 'pdf',
+    pageNumber,
+    textMap,
+    sentences: effectiveSentences,
+    highlights,
+    embeddings,
+  };
 };
 
 const startBackgroundIndexing = async (
@@ -3245,27 +3533,45 @@ const startBackgroundIndexing = async (
   }
 
   const totalPages = doc.numPages;
-  backgroundTotalPages = totalPages;
+  const { cappedTotalPages } = getAutoPageLimit(totalPages);
+  const pageCapNote = getAutoPageNote(totalPages, cappedTotalPages);
+  backgroundTotalPages = cappedTotalPages;
 
-  if (totalPages <= 1 || startPage > totalPages) {
-    setProgress(backgroundProcessedPages, backgroundTotalPages, 'All pages indexed.');
+  if (autoSentenceCapReached) {
+    notifySentenceCap();
     return;
   }
 
-  for (let pageNumber = startPage; pageNumber <= totalPages; pageNumber += 1) {
+  if (totalPages <= 1 || startPage > cappedTotalPages) {
+    setProgress(
+      backgroundProcessedPages,
+      backgroundTotalPages,
+      appendNote('All pages indexed.', pageCapNote),
+    );
+    return;
+  }
+
+  for (let pageNumber = startPage; pageNumber <= cappedTotalPages; pageNumber += 1) {
     if (processId !== backgroundProcessId) {
+      return;
+    }
+    if (autoSentenceCapReached) {
+      notifySentenceCap();
       return;
     }
 
     setProgress(
       backgroundProcessedPages,
       backgroundTotalPages,
-      `Indexing page ${pageNumber} of ${totalPages}...`,
+      `Indexing page ${pageNumber} of ${backgroundTotalPages}...`,
     );
 
     try {
       const entry = await indexPdfPage(doc, pageNumber, processId);
       if (!entry) {
+        if (autoSentenceCapReached) {
+          notifySentenceCap();
+        }
         return;
       }
       indexedPages.set(pageNumber, entry);
@@ -3274,13 +3580,17 @@ const startBackgroundIndexing = async (
       console.error('Failed to index page', pageNumber, error);
     }
 
-    backgroundProcessedPages = Math.min(totalPages, backgroundProcessedPages + 1);
+    backgroundProcessedPages = Math.min(backgroundTotalPages, backgroundProcessedPages + 1);
     setProgress(
       backgroundProcessedPages,
       backgroundTotalPages,
-      `Indexed ${backgroundProcessedPages} of ${totalPages} pages.`,
+      `Indexed ${backgroundProcessedPages} of ${backgroundTotalPages} pages.`,
     );
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    if (autoSentenceCapReached) {
+      notifySentenceCap();
+      return;
+    }
+    await yieldToUi();
   }
 };
 
@@ -3398,14 +3708,22 @@ const loadPdf = async (file: File) => {
     pdfDoc = await loadingTask.promise;
     currentPage = await pdfDoc.getPage(1);
     setPageIndicator(1, pdfDoc.numPages);
-    backgroundTotalPages = pdfDoc.numPages;
+    const { cappedTotalPages } = getAutoPageLimit(pdfDoc.numPages);
+    const pageCapNote = getAutoPageNote(pdfDoc.numPages, cappedTotalPages);
+    backgroundTotalPages = cappedTotalPages;
     backgroundProcessedPages = 0;
-    setProgress(0, backgroundTotalPages, `Preparing page 1 of ${pdfDoc.numPages}...`);
+    setProgress(
+      0,
+      backgroundTotalPages,
+      appendNote(`Preparing page 1 of ${backgroundTotalPages}...`, pageCapNote),
+    );
     setViewerMode('pdf');
     setStatus(`Rendering page 1 of ${pdfDoc.numPages}...`);
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
+    const capped = clampSentencesForAutoIndexing(currentPageSentences);
+    currentPageSentences = capped.sentences;
     updateAutoHighlights(currentPageSentences, null);
     indexedPages.set(currentPage.pageNumber, {
       source: 'pdf',
@@ -3415,6 +3733,7 @@ const loadPdf = async (file: File) => {
       highlights: currentPageHighlightSentences,
       embeddings: null,
     });
+    registerAutoSentenceCount(currentPageSentences.length);
     setExportEnabled(true);
     const highlightStats = renderHighlights();
     renderStudyStrip();
@@ -3425,8 +3744,12 @@ const loadPdf = async (file: File) => {
       pdfDoc.numPages > 1
         ? 'Page 1 ready. Indexing remaining pages...'
         : 'Single-page PDF ready.';
-    setProgress(backgroundProcessedPages, backgroundTotalPages, progressMessage);
+    setProgress(backgroundProcessedPages, backgroundTotalPages, appendNote(progressMessage, pageCapNote));
     const embeddingsTask = runPageEmbeddings(currentPageSentences, statusPrefix);
+    if (autoSentenceCapReached) {
+      notifySentenceCap();
+      return;
+    }
     void startBackgroundIndexing(pdfDoc, processId, 2, embeddingsTask);
   } catch (error) {
     console.error(error);
