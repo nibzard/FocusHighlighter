@@ -295,6 +295,112 @@ body {
   font-size: 0.9rem;
 }
 
+.strip-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 18px;
+}
+
+.strip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.strip-header h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.strip-list {
+  display: grid;
+  gap: 16px;
+}
+
+.strip-empty {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.strip-group {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.strip-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.strip-group-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.strip-items {
+  display: grid;
+  gap: 8px;
+}
+
+.strip-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: rgba(255, 248, 236, 0.92);
+}
+
+.strip-item.pinned {
+  border-color: rgba(224, 122, 46, 0.45);
+  background: rgba(255, 238, 214, 0.96);
+}
+
+.strip-text {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.strip-pin {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.strip-pin:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.strip-pin[aria-pressed="true"] {
+  background: rgba(224, 122, 46, 0.12);
+  border-color: rgba(224, 122, 46, 0.5);
+}
+
 @media (max-width: 960px) {
   .stage {
     grid-template-columns: 1fr;
@@ -313,5 +419,18 @@ body {
   .viewer-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .strip-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .strip-item {
+    grid-template-columns: 1fr;
+  }
+
+  .strip-pin {
+    justify-self: flex-start;
   }
 }

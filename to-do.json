@@ -107,7 +107,7 @@
       "title": "Implement auto-highlight scoring (centrality/globality/priors) and MMR selection",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T20:53:21Z",
+      "updated_at": "2026-01-18T20:54:11Z",
       "details": "Implemented auto-highlight scoring with centrality/globality priors, length/position boosts, and MMR-based selection.",
       "files": [
         "src/main.ts",
@@ -119,7 +119,7 @@
       "title": "Add progressive processing: Page 1 fast path, background page indexing, progress UI",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T21:01:50Z",
+      "updated_at": "2026-01-18T21:03:51Z",
       "details": "Added background page indexing after page 1 with a progress panel and status updates.",
       "files": [
         "src/main.ts",
@@ -132,7 +132,7 @@
       "title": "Export highlighted PDF for PDF inputs using pdf-lib rectangles with correct coordinates",
       "priority": 1,
       "status": "done",
-      "updated_at": "2026-01-18T21:09:11Z",
+      "updated_at": "2026-01-18T21:10:34Z",
       "details": "Added highlighted PDF export using pdf-lib rectangles and a download action.",
       "files": [
         "package.json",
@@ -145,7 +145,14 @@
       "id": "T011",
       "title": "Implement Study Strip UI grouped by page with pin/unpin highlights",
       "priority": 2,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T21:16:36Z",
+      "details": "Added Study Strip panel grouped by page with pin and unpin toggles.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T012",

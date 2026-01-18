@@ -71,6 +71,17 @@ app.innerHTML = `
         </div>
       </article>
     </section>
+    <section class="strip-card" aria-live="polite">
+      <div class="strip-header">
+        <div>
+          <h2>Study Strip</h2>
+          <p class="muted">Verbatim highlights grouped by page. Pin the lines you want to keep.</p>
+        </div>
+        <span id="study-strip-count" class="pill">0 pinned</span>
+      </div>
+      <div id="study-strip-list" class="strip-list" role="list"></div>
+      <p id="study-strip-empty" class="muted strip-empty">Upload a PDF to populate the study strip.</p>
+    </section>
   </main>
 `;
 
@@ -89,6 +100,9 @@ const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-s
 const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
 const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
 const downloadButton = document.querySelector<HTMLButtonElement>('#download-highlighted');
+const studyStripList = document.querySelector<HTMLDivElement>('#study-strip-list');
+const studyStripEmpty = document.querySelector<HTMLParagraphElement>('#study-strip-empty');
+const studyStripCount = document.querySelector<HTMLSpanElement>('#study-strip-count');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
@@ -97,6 +111,7 @@ let resizeTimer: number | undefined;
 let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
 let pdfBytes: ArrayBuffer | null = null;
 let currentFileName: string | null = null;
+const pinnedHighlightIds = new Set<string>();
 
 type IndexedPage = {
   pageNumber: number;
@@ -625,6 +640,7 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
         });
       }
     }
+    renderStudyStrip();
     const activeDevice = embeddingBackend ?? preferredDevice;
     setStatus(
       `${statusPrefix} Auto-highlighted ${highlightStats.sentences} sentences with embeddings (${formatEmbeddingDeviceLabel(activeDevice)}).`,
@@ -718,6 +734,8 @@ const resetViewer = () => {
     highlightLayer.innerHTML = '';
   }
   setPageIndicator(1, null);
+  pinnedHighlightIds.clear();
+  renderStudyStrip();
 };
 
 const isPdfTextItem = (item: PdfTextItem | PdfTextMarkedContent): item is PdfTextItem =>
@@ -1175,6 +1193,138 @@ const getPageHighlightSentences = (entry: IndexedPage) => {
   return entry.sentences.slice(0, fallbackCount);
 };
 
+const sortHighlightsByPosition = (a: SentenceSegment, b: SentenceSegment) => {
+  if (a.paragraphIndex !== b.paragraphIndex) {
+    return a.paragraphIndex - b.paragraphIndex;
+  }
+  if (a.sentenceIndex !== b.sentenceIndex) {
+    return a.sentenceIndex - b.sentenceIndex;
+  }
+  return a.charStart - b.charStart;
+};
+
+const buildStudyStripSections = () =>
+  Array.from(indexedPages.values())
+    .sort((a, b) => a.pageNumber - b.pageNumber)
+    .map((entry) => ({
+      pageNumber: entry.pageNumber,
+      highlights: getPageHighlightSentences(entry).slice().sort(sortHighlightsByPosition),
+    }))
+    .filter((section) => section.highlights.length > 0);
+
+const updateStudyStripSummary = (pinnedCount: number, totalCount: number) => {
+  if (!studyStripCount) {
+    return;
+  }
+  if (totalCount === 0) {
+    studyStripCount.textContent = '0 pinned';
+    studyStripCount.title = 'No highlights yet';
+    return;
+  }
+  studyStripCount.textContent = `${pinnedCount} pinned`;
+  studyStripCount.title = `${totalCount} highlighted lines`;
+};
+
+const renderStudyStrip = () => {
+  if (!studyStripList || !studyStripEmpty) {
+    return;
+  }
+
+  studyStripList.innerHTML = '';
+  const sections = buildStudyStripSections();
+  const fragment = document.createDocumentFragment();
+  const activeIds = new Set<string>();
+  let totalHighlights = 0;
+  let totalPinned = 0;
+
+  for (const section of sections) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'strip-group';
+
+    const headerEl = document.createElement('div');
+    headerEl.className = 'strip-group-header';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'strip-group-title';
+    titleEl.textContent = `Page ${section.pageNumber}`;
+
+    const metaEl = document.createElement('span');
+    metaEl.className = 'strip-group-meta';
+
+    const itemsEl = document.createElement('div');
+    itemsEl.className = 'strip-items';
+
+    let pinnedInGroup = 0;
+
+    for (const sentence of section.highlights) {
+      totalHighlights += 1;
+      activeIds.add(sentence.id);
+      const isPinned = pinnedHighlightIds.has(sentence.id);
+      if (isPinned) {
+        totalPinned += 1;
+        pinnedInGroup += 1;
+      }
+
+      const itemEl = document.createElement('div');
+      itemEl.className = `strip-item${isPinned ? ' pinned' : ''}`;
+
+      const textEl = document.createElement('p');
+      textEl.className = 'strip-text';
+      textEl.textContent = sentence.text;
+
+      const pinButton = document.createElement('button');
+      pinButton.type = 'button';
+      pinButton.className = 'strip-pin';
+      pinButton.dataset.sentenceId = sentence.id;
+      pinButton.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+      pinButton.textContent = isPinned ? 'Unpin' : 'Pin';
+
+      itemEl.append(textEl, pinButton);
+      itemsEl.append(itemEl);
+    }
+
+    metaEl.textContent =
+      pinnedInGroup > 0
+        ? `${pinnedInGroup} pinned, ${section.highlights.length} lines`
+        : `${section.highlights.length} lines`;
+
+    headerEl.append(titleEl, metaEl);
+    groupEl.append(headerEl, itemsEl);
+    fragment.append(groupEl);
+  }
+
+  for (const id of Array.from(pinnedHighlightIds)) {
+    if (!activeIds.has(id)) {
+      pinnedHighlightIds.delete(id);
+    }
+  }
+
+  updateStudyStripSummary(totalPinned, totalHighlights);
+
+  if (!sections.length) {
+    studyStripEmpty.textContent =
+      indexedPages.size === 0
+        ? 'Upload a PDF to populate the study strip.'
+        : 'No highlights available yet.';
+    studyStripEmpty.hidden = false;
+    studyStripList.hidden = true;
+    return;
+  }
+
+  studyStripEmpty.hidden = true;
+  studyStripList.hidden = false;
+  studyStripList.append(fragment);
+};
+
+const togglePinnedHighlight = (sentenceId: string) => {
+  if (pinnedHighlightIds.has(sentenceId)) {
+    pinnedHighlightIds.delete(sentenceId);
+  } else {
+    pinnedHighlightIds.add(sentenceId);
+  }
+  renderStudyStrip();
+};
+
 const collectHighlightRects = (
   textMap: PageTextMap,
   highlightSentences: SentenceSegment[],
@@ -1360,6 +1510,7 @@ const startBackgroundIndexing = async (
         return;
       }
       indexedPages.set(pageNumber, entry);
+      renderStudyStrip();
     } catch (error) {
       console.error('Failed to index page', pageNumber, error);
     }
@@ -1450,6 +1601,7 @@ const loadPdf = async (file: File) => {
     });
     setExportEnabled(true);
     const highlightStats = renderHighlights();
+    renderStudyStrip();
     const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences.`;
     setStatus(`${statusPrefix} Highlighted ${highlightStats.sentences} sentences.`);
     backgroundProcessedPages = 1;
@@ -1503,6 +1655,19 @@ downloadButton?.addEventListener('click', () => {
   void exportHighlightedPdf();
 });
 
+studyStripList?.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const button = target.closest<HTMLButtonElement>('button[data-sentence-id]');
+  if (!button) {
+    return;
+  }
+  const sentenceId = button.dataset.sentenceId;
+  if (!sentenceId) {
+    return;
+  }
+  togglePinnedHighlight(sentenceId);
+});
+
 window.addEventListener('resize', () => {
   if (!currentPage) {
     return;
@@ -1514,3 +1679,5 @@ window.addEventListener('resize', () => {
     });
   }, 150);
 });
+
+renderStudyStrip();
