@@ -53,6 +53,16 @@ app.innerHTML = `
             <div id="highlight-layer" class="highlight-layer"></div>
           </div>
         </div>
+        <div class="progress-panel" aria-live="polite">
+          <div class="progress-meta">
+            <span class="progress-title">Background indexing</span>
+            <span id="progress-count" class="progress-count">0 / 0 pages</span>
+          </div>
+          <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+          <p id="progress-status" class="muted progress-status">Waiting for PDF upload.</p>
+        </div>
       </article>
     </section>
   </main>
@@ -69,12 +79,22 @@ const pdfStack = document.querySelector<HTMLDivElement>('#pdf-stack');
 const pdfCanvas = document.querySelector<HTMLCanvasElement>('#pdf-canvas');
 const pdfContext = pdfCanvas?.getContext('2d');
 const highlightLayer = document.querySelector<HTMLDivElement>('#highlight-layer');
+const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-status');
+const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
+const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
 let renderTask: RenderTask | null = null;
 let resizeTimer: number | undefined;
 let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
+
+type IndexedPage = {
+  pageNumber: number;
+  textMap: PageTextMap;
+  sentences: SentenceSegment[];
+  highlights: SentenceSegment[];
+};
 
 type PdfTextItem = {
   str: string;
@@ -178,6 +198,10 @@ let embeddingBackend: EmbeddingDevice | null = null;
 let embeddingRequestId = 0;
 let currentPageEmbeddings: Float32Array[] | null = null;
 let currentPageHighlightSentences: SentenceSegment[] = [];
+const indexedPages = new Map<number, IndexedPage>();
+let backgroundProcessId = 0;
+let backgroundProcessedPages = 0;
+let backgroundTotalPages = 0;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -500,6 +524,30 @@ const poolTokenEmbeddings = (
   return pooled;
 };
 
+const computeEmbeddingsForSentences = async (sentences: SentenceSegment[]) => {
+  if (!sentences.length) {
+    return null;
+  }
+
+  const extractor = await getEmbeddingPipeline();
+  const inputs = prepareEmbeddingInputs(sentences);
+  const tokenEmbeddings = await extractor(inputs, { pooling: 'none' });
+
+  const tokenBatch = extractTokenEmbeddings(tokenEmbeddings);
+  if (!tokenBatch) {
+    return null;
+  }
+
+  const attentionMask = await getAttentionMask(
+    extractor,
+    inputs,
+    tokenBatch.batchSize,
+    tokenBatch.sequenceLength,
+  );
+
+  return poolTokenEmbeddings(tokenBatch, attentionMask);
+};
+
 const cosineSimilarity = (a: ArrayLike<number>, b: ArrayLike<number>) => {
   if (a.length !== b.length) {
     return 0;
@@ -534,37 +582,16 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
   setStatus(`${statusPrefix} Loading embeddings (${formatEmbeddingDeviceLabel(preferredDevice)})...`);
 
   try {
-    const extractor = await getEmbeddingPipeline();
+    const pooledEmbeddings = await computeEmbeddingsForSentences(sentences);
     if (requestId !== embeddingRequestId) {
       return;
     }
-    const inputs = prepareEmbeddingInputs(sentences);
-    const tokenEmbeddings = await extractor(inputs, { pooling: 'none' });
-    if (requestId !== embeddingRequestId) {
-      return;
-    }
-
-    const tokenBatch = extractTokenEmbeddings(tokenEmbeddings);
-    if (!tokenBatch) {
+    if (!pooledEmbeddings) {
       setStatus(`${statusPrefix} Embeddings loaded but could not be parsed.`);
       return;
     }
 
-    const attentionMask = await getAttentionMask(
-      extractor,
-      inputs,
-      tokenBatch.batchSize,
-      tokenBatch.sequenceLength,
-    );
-    if (requestId !== embeddingRequestId) {
-      return;
-    }
-
-    const pooledEmbeddings = poolTokenEmbeddings(tokenBatch, attentionMask);
     currentPageEmbeddings = pooledEmbeddings;
-    if (requestId !== embeddingRequestId) {
-      return;
-    }
     updateAutoHighlights(currentPageSentences, currentPageEmbeddings);
     const highlightStats = renderHighlights();
     if (pooledEmbeddings.length > 1) {
@@ -572,6 +599,15 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
         'Embedding sample similarity',
         cosineSimilarity(pooledEmbeddings[0], pooledEmbeddings[1]).toFixed(4),
       );
+    }
+    if (currentPage) {
+      const existing = indexedPages.get(currentPage.pageNumber);
+      if (existing) {
+        indexedPages.set(currentPage.pageNumber, {
+          ...existing,
+          highlights: currentPageHighlightSentences,
+        });
+      }
     }
     const activeDevice = embeddingBackend ?? preferredDevice;
     setStatus(
@@ -605,6 +641,33 @@ const setPageIndicator = (current: number, total: number | null) => {
   pageIndicator.textContent = `Page ${current} / ${total ?? '-'}`;
 };
 
+const formatProgressCount = (completed: number, total: number) => `${completed} / ${total} pages`;
+
+const getProgressPercent = (completed: number, total: number) => {
+  if (!total || total <= 0) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, (completed / total) * 100));
+};
+
+const setProgress = (completed: number, total: number, message: string) => {
+  if (progressCount) {
+    progressCount.textContent = formatProgressCount(completed, total);
+  }
+  if (progressFill) {
+    progressFill.style.width = `${getProgressPercent(completed, total)}%`;
+  }
+  if (progressStatus) {
+    progressStatus.textContent = message;
+  }
+};
+
+const resetProgress = () => {
+  backgroundProcessedPages = 0;
+  backgroundTotalPages = 0;
+  setProgress(0, 0, 'Waiting for PDF upload.');
+};
+
 const resetViewer = () => {
   pdfDoc = null;
   currentPage = null;
@@ -614,6 +677,9 @@ const resetViewer = () => {
   currentPageHighlightSentences = [];
   currentViewport = null;
   embeddingRequestId += 1;
+  backgroundProcessId += 1;
+  indexedPages.clear();
+  resetProgress();
   if (viewerStage) {
     viewerStage.classList.remove('is-ready');
   }
@@ -932,19 +998,17 @@ const selectHighlightsWithMmr = (
   return selected;
 };
 
-const updateAutoHighlights = (
+const selectAutoHighlights = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
 ) => {
   const targetCount = getHighlightTargetCount(sentences.length);
   if (!targetCount) {
-    currentPageHighlightSentences = [];
-    return 0;
+    return [];
   }
 
   if (!embeddings || embeddings.length !== sentences.length) {
-    currentPageHighlightSentences = sentences.slice(0, targetCount);
-    return currentPageHighlightSentences.length;
+    return sentences.slice(0, targetCount);
   }
 
   const candidates = buildSentenceScores(sentences, embeddings).sort(
@@ -953,8 +1017,14 @@ const updateAutoHighlights = (
   const selected = selectHighlightsWithMmr(candidates, targetCount, highlightMmrLambda).map(
     (entry) => entry.sentence,
   );
-  currentPageHighlightSentences =
-    selected.length > 0 ? selected : sentences.slice(0, targetCount);
+  return selected.length > 0 ? selected : sentences.slice(0, targetCount);
+};
+
+const updateAutoHighlights = (
+  sentences: SentenceSegment[],
+  embeddings: Float32Array[] | null,
+) => {
+  currentPageHighlightSentences = selectAutoHighlights(sentences, embeddings);
   return currentPageHighlightSentences.length;
 };
 
@@ -1033,6 +1103,96 @@ const renderHighlights = () => {
   return { sentences: highlightSentences.length, rects: rectCount };
 };
 
+const indexPdfPage = async (
+  doc: PDFDocumentProxy,
+  pageNumber: number,
+  processId: number,
+): Promise<IndexedPage | null> => {
+  const page = await doc.getPage(pageNumber);
+  if (processId !== backgroundProcessId) {
+    return null;
+  }
+
+  const textMap = await extractPageTextMap(page);
+  if (processId !== backgroundProcessId) {
+    return null;
+  }
+
+  const sentences = segmentPageText(textMap, pageNumber);
+  let embeddings: Float32Array[] | null = null;
+
+  if (sentences.length) {
+    try {
+      embeddings = await computeEmbeddingsForSentences(sentences);
+    } catch (error) {
+      console.debug('Embedding failed for page', pageNumber, error);
+    }
+    if (processId !== backgroundProcessId) {
+      return null;
+    }
+  }
+
+  const highlights = selectAutoHighlights(sentences, embeddings);
+  return { pageNumber, textMap, sentences, highlights };
+};
+
+const startBackgroundIndexing = async (
+  doc: PDFDocumentProxy,
+  processId: number,
+  startPage: number,
+  waitFor?: Promise<void>,
+) => {
+  if (waitFor) {
+    try {
+      await waitFor;
+    } catch (error) {
+      console.debug('Page 1 embeddings failed', error);
+    }
+  }
+
+  if (processId !== backgroundProcessId) {
+    return;
+  }
+
+  const totalPages = doc.numPages;
+  backgroundTotalPages = totalPages;
+
+  if (totalPages <= 1 || startPage > totalPages) {
+    setProgress(backgroundProcessedPages, backgroundTotalPages, 'All pages indexed.');
+    return;
+  }
+
+  for (let pageNumber = startPage; pageNumber <= totalPages; pageNumber += 1) {
+    if (processId !== backgroundProcessId) {
+      return;
+    }
+
+    setProgress(
+      backgroundProcessedPages,
+      backgroundTotalPages,
+      `Indexing page ${pageNumber} of ${totalPages}...`,
+    );
+
+    try {
+      const entry = await indexPdfPage(doc, pageNumber, processId);
+      if (!entry) {
+        return;
+      }
+      indexedPages.set(pageNumber, entry);
+    } catch (error) {
+      console.error('Failed to index page', pageNumber, error);
+    }
+
+    backgroundProcessedPages = Math.min(totalPages, backgroundProcessedPages + 1);
+    setProgress(
+      backgroundProcessedPages,
+      backgroundTotalPages,
+      `Indexed ${backgroundProcessedPages} of ${totalPages} pages.`,
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+};
+
 const renderPage = async (page: PDFPageProxy) => {
   if (!viewerStage || !pdfCanvas || !pdfContext) {
     return;
@@ -1079,6 +1239,7 @@ const loadPdf = async (file: File) => {
   setFileName(file.name);
   setStatus('Loading PDF...');
   resetViewer();
+  const processId = backgroundProcessId;
 
   try {
     const buffer = await file.arrayBuffer();
@@ -1087,6 +1248,9 @@ const loadPdf = async (file: File) => {
     pdfDoc = await loadingTask.promise;
     currentPage = await pdfDoc.getPage(1);
     setPageIndicator(1, pdfDoc.numPages);
+    backgroundTotalPages = pdfDoc.numPages;
+    backgroundProcessedPages = 0;
+    setProgress(0, backgroundTotalPages, `Preparing page 1 of ${pdfDoc.numPages}...`);
     if (viewerStage) {
       viewerStage.classList.add('is-ready');
     }
@@ -1095,13 +1259,27 @@ const loadPdf = async (file: File) => {
     currentPageTextMap = await extractPageTextMap(currentPage);
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     updateAutoHighlights(currentPageSentences, null);
+    indexedPages.set(currentPage.pageNumber, {
+      pageNumber: currentPage.pageNumber,
+      textMap: currentPageTextMap,
+      sentences: currentPageSentences,
+      highlights: currentPageHighlightSentences,
+    });
     const highlightStats = renderHighlights();
     const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences.`;
     setStatus(`${statusPrefix} Highlighted ${highlightStats.sentences} sentences.`);
-    void runPageEmbeddings(currentPageSentences, statusPrefix);
+    backgroundProcessedPages = 1;
+    const progressMessage =
+      pdfDoc.numPages > 1
+        ? 'Page 1 ready. Indexing remaining pages...'
+        : 'Single-page PDF ready.';
+    setProgress(backgroundProcessedPages, backgroundTotalPages, progressMessage);
+    const embeddingsTask = runPageEmbeddings(currentPageSentences, statusPrefix);
+    void startBackgroundIndexing(pdfDoc, processId, 2, embeddingsTask);
   } catch (error) {
     console.error(error);
     setStatus('Unable to render this PDF. Try another file.');
+    setProgress(backgroundProcessedPages, backgroundTotalPages, 'PDF rendering failed.');
     if (viewerPlaceholder) {
       viewerPlaceholder.textContent = 'Rendering failed. Upload another PDF.';
     }

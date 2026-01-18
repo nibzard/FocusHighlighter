@@ -118,7 +118,14 @@
       "id": "T009",
       "title": "Add progressive processing: Page 1 fast path, background page indexing, progress UI",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T21:01:50Z",
+      "details": "Added background page indexing after page 1 with a progress panel and status updates.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T010",

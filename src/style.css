@@ -211,6 +211,54 @@ body {
   display: none;
 }
 
+.progress-panel {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+}
+
+.progress-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.progress-count {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.progress-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(224, 122, 46, 0.15);
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #f3b261);
+  transition: width 0.2s ease;
+}
+
+.progress-status {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
 @media (max-width: 960px) {
   .stage {
     grid-template-columns: 1fr;
