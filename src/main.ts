@@ -70,6 +70,38 @@ let currentPage: PDFPageProxy | null = null;
 let renderTask: RenderTask | null = null;
 let resizeTimer: number | undefined;
 
+type PdfTextItem = {
+  str: string;
+  transform: number[];
+  width: number;
+  height: number;
+  fontName: string;
+  hasEOL?: boolean;
+};
+
+type PdfTextMarkedContent = {
+  type: string;
+  id?: string;
+};
+
+type PdfTextContent = {
+  items: Array<PdfTextItem | PdfTextMarkedContent>;
+};
+
+type PdfTextItemRange = {
+  itemIndex: number;
+  charStart: number;
+  charEnd: number;
+};
+
+type PageTextMap = {
+  fullText: string;
+  items: PdfTextItem[];
+  itemRanges: PdfTextItemRange[];
+};
+
+let currentPageTextMap: PageTextMap | null = null;
+
 const setStatus = (message: string) => {
   if (fileStatus) {
     fileStatus.textContent = message;
@@ -92,6 +124,7 @@ const setPageIndicator = (current: number, total: number | null) => {
 const resetViewer = () => {
   pdfDoc = null;
   currentPage = null;
+  currentPageTextMap = null;
   if (viewerStage) {
     viewerStage.classList.remove('is-ready');
   }
@@ -102,6 +135,61 @@ const resetViewer = () => {
     pdfContext.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
   }
   setPageIndicator(1, null);
+};
+
+const isPdfTextItem = (item: PdfTextItem | PdfTextMarkedContent): item is PdfTextItem =>
+  typeof (item as PdfTextItem).str === 'string';
+
+const needsSyntheticSpace = (current: string, next: string) => {
+  const lastChar = current.at(-1);
+  const nextChar = next[0];
+  if (!lastChar || !nextChar) {
+    return false;
+  }
+  return !/\s/.test(lastChar) && !/\s/.test(nextChar);
+};
+
+const findNextTextItem = (items: PdfTextContent['items'], startIndex: number) => {
+  for (let index = startIndex; index < items.length; index += 1) {
+    const item = items[index];
+    if (isPdfTextItem(item)) {
+      return item;
+    }
+  }
+  return null;
+};
+
+const extractPageTextMap = async (page: PDFPageProxy): Promise<PageTextMap> => {
+  const textContent = (await page.getTextContent()) as PdfTextContent;
+  const items: PdfTextItem[] = [];
+  const itemRanges: PdfTextItemRange[] = [];
+  let fullText = '';
+
+  for (let index = 0; index < textContent.items.length; index += 1) {
+    const item = textContent.items[index];
+    if (!isPdfTextItem(item)) {
+      continue;
+    }
+    const text = item.str ?? '';
+    const charStart = fullText.length;
+    fullText += text;
+    const charEnd = fullText.length;
+    const itemIndex = items.length;
+    items.push(item);
+    itemRanges.push({ itemIndex, charStart, charEnd });
+
+    if (item.hasEOL) {
+      fullText += '\n';
+      continue;
+    }
+
+    const nextTextItem = findNextTextItem(textContent.items, index + 1);
+    if (nextTextItem && needsSyntheticSpace(text, nextTextItem.str)) {
+      fullText += ' ';
+    }
+  }
+
+  return { fullText, items, itemRanges };
 };
 
 const renderPage = async (page: PDFPageProxy) => {
@@ -156,8 +244,12 @@ const loadPdf = async (file: File) => {
     if (viewerStage) {
       viewerStage.classList.add('is-ready');
     }
-    setStatus(`Rendered page 1 of ${pdfDoc.numPages}.`);
+    setStatus(`Rendering page 1 of ${pdfDoc.numPages}...`);
     await renderPage(currentPage);
+    currentPageTextMap = await extractPageTextMap(currentPage);
+    setStatus(
+      `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items.`,
+    );
   } catch (error) {
     console.error(error);
     setStatus('Unable to render this PDF. Try another file.');
