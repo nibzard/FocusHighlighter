@@ -84,6 +84,62 @@ app.innerHTML = `
           </div>
           <span id="page-indicator" class="pill">Page 1 / -</span>
         </div>
+        <div class="highlight-controls" aria-label="Highlight controls">
+          <div class="control-group">
+            <p class="control-label">Highlight mode</p>
+            <div class="segmented-control" role="group" aria-label="Highlight mode">
+              <button
+                class="segment-button"
+                type="button"
+                data-highlight-mode="auto"
+                aria-pressed="true"
+              >
+                Auto
+              </button>
+              <button
+                class="segment-button"
+                type="button"
+                data-highlight-mode="question"
+                aria-pressed="false"
+                aria-disabled="true"
+                disabled
+              >
+                Question
+              </button>
+            </div>
+            <p id="mode-note" class="muted control-note">Question mode is coming soon.</p>
+          </div>
+          <div class="control-group">
+            <p class="control-label">Intensity</p>
+            <div class="segmented-control" role="group" aria-label="Highlight intensity">
+              <button
+                class="segment-button"
+                type="button"
+                data-highlight-intensity="less"
+                aria-pressed="false"
+              >
+                Less
+              </button>
+              <button
+                class="segment-button"
+                type="button"
+                data-highlight-intensity="default"
+                aria-pressed="true"
+              >
+                Default
+              </button>
+              <button
+                class="segment-button"
+                type="button"
+                data-highlight-intensity="more"
+                aria-pressed="false"
+              >
+                More
+              </button>
+            </div>
+            <p id="intensity-note" class="muted control-note">Balanced coverage for typical study loads.</p>
+          </div>
+        </div>
         <div id="viewer-stage" class="viewer-stage">
           <div id="viewer-placeholder" class="viewer-placeholder">
             Document preview will appear here after upload.
@@ -166,6 +222,14 @@ const studyStripCount = document.querySelector<HTMLSpanElement>('#study-strip-co
 const studyStripCopyButton = document.querySelector<HTMLButtonElement>('#study-strip-copy');
 const studyStripDownloadButton = document.querySelector<HTMLButtonElement>('#study-strip-download');
 const studyStripExportNote = document.querySelector<HTMLParagraphElement>('#study-strip-export-note');
+const highlightModeButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-highlight-mode]'),
+);
+const highlightModeNote = document.querySelector<HTMLParagraphElement>('#mode-note');
+const highlightIntensityButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-highlight-intensity]'),
+);
+const highlightIntensityNote = document.querySelector<HTMLParagraphElement>('#intensity-note');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
@@ -178,6 +242,8 @@ const pinnedHighlightIds = new Set<string>();
 type DocumentSourceKind = 'pdf' | 'docx' | 'url' | 'text' | null;
 let currentSourceKind: DocumentSourceKind = null;
 type ReadingSourceKind = 'docx' | 'url' | 'text';
+type HighlightMode = 'auto' | 'question';
+type HighlightIntensity = 'less' | 'default' | 'more';
 
 type IndexedPage =
   | {
@@ -186,12 +252,14 @@ type IndexedPage =
       textMap: PageTextMap;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
+      embeddings: Float32Array[] | null;
     }
   | {
       source: ReadingSourceKind;
       pageNumber: number;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
+      embeddings: Float32Array[] | null;
     };
 
 type PdfTextItem = {
@@ -332,7 +400,34 @@ const embeddingModelId = 'Xenova/multilingual-e5-small';
 
 let currentPageTextMap: PageTextMap | null = null;
 let currentPageSentences: SentenceSegment[] = [];
-const maxHighlightSentences = 6;
+const highlightIntensitySettings: Record<
+  HighlightIntensity,
+  { ratio: number; max: number; min: number; note: string; label: string }
+> = {
+  less: {
+    ratio: 0.12,
+    max: 3,
+    min: 1,
+    note: 'Fewer highlights per page.',
+    label: 'Less',
+  },
+  default: {
+    ratio: 0.2,
+    max: 6,
+    min: 2,
+    note: 'Balanced coverage for typical study loads.',
+    label: 'Default',
+  },
+  more: {
+    ratio: 0.3,
+    max: 9,
+    min: 3,
+    note: 'More highlights for dense passages.',
+    label: 'More',
+  },
+};
+let currentHighlightIntensity: HighlightIntensity = 'default';
+let currentHighlightMode: HighlightMode = 'auto';
 const highlightMmrLambda = 0.35;
 let embeddingPipelinePromise: Promise<EmbeddingPipeline> | null = null;
 let embeddingBackend: EmbeddingDevice | null = null;
@@ -749,6 +844,7 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
         indexedPages.set(currentPage.pageNumber, {
           ...existing,
           highlights: currentPageHighlightSentences,
+          embeddings: currentPageEmbeddings,
         });
       }
     }
@@ -1468,6 +1564,26 @@ const applyInlineHighlight = (block: HTMLElement, startOffset: number, endOffset
   return true;
 };
 
+const clearDocxHighlights = (page: DocxPage) => {
+  const highlights = page.content.querySelectorAll<HTMLSpanElement>('.docx-highlight');
+  if (highlights.length === 0) {
+    return;
+  }
+
+  highlights.forEach((highlight) => {
+    const parent = highlight.parentNode;
+    if (!parent) {
+      return;
+    }
+    while (highlight.firstChild) {
+      parent.insertBefore(highlight.firstChild, highlight);
+    }
+    parent.removeChild(highlight);
+  });
+  page.content.normalize();
+  page.element.dataset.highlightCount = '0';
+};
+
 const renderDocxPageHighlights = (
   page: DocxPage,
   textMap: DocxPageTextMap,
@@ -1525,7 +1641,7 @@ const indexDocxPage = async (page: DocxPage, processId: number, sourceKind: Read
 
   const highlights = selectAutoHighlights(sentences, embeddings);
   renderDocxPageHighlights(page, textMap, highlights);
-  return { source: sourceKind, pageNumber: page.pageNumber, sentences, highlights };
+  return { source: sourceKind, pageNumber: page.pageNumber, sentences, highlights, embeddings };
 };
 
 const startDocxIndexing = async (
@@ -1917,11 +2033,13 @@ const getHighlightTargetCount = (sentenceCount: number) => {
   if (sentenceCount <= 0) {
     return 0;
   }
-  const target = Math.min(maxHighlightSentences, Math.ceil(0.2 * sentenceCount));
-  if (sentenceCount >= 2) {
-    return Math.max(2, target);
+  const settings = highlightIntensitySettings[currentHighlightIntensity];
+  const target = Math.min(settings.max, Math.ceil(settings.ratio * sentenceCount));
+  if (sentenceCount <= 1) {
+    return sentenceCount;
   }
-  return 1;
+  const minimum = Math.min(sentenceCount, settings.min);
+  return Math.min(sentenceCount, Math.max(minimum, target));
 };
 
 const computeCentroid = (embeddings: Float32Array[]) => {
@@ -2414,6 +2532,86 @@ const renderStudyStrip = () => {
   studyStripList.append(fragment);
 };
 
+const updateHighlightModeControls = () => {
+  highlightModeButtons.forEach((button) => {
+    const mode = button.dataset.highlightMode as HighlightMode | undefined;
+    if (!mode) {
+      return;
+    }
+    button.setAttribute('aria-pressed', mode === currentHighlightMode ? 'true' : 'false');
+  });
+  if (highlightModeNote) {
+    highlightModeNote.textContent = 'Auto mode selects key sentences. Question mode is coming soon.';
+  }
+};
+
+const setHighlightMode = (mode: HighlightMode) => {
+  if (currentHighlightMode === mode) {
+    return;
+  }
+  currentHighlightMode = mode;
+  updateHighlightModeControls();
+};
+
+const updateHighlightIntensityControls = () => {
+  highlightIntensityButtons.forEach((button) => {
+    const intensity = button.dataset.highlightIntensity as HighlightIntensity | undefined;
+    if (!intensity) {
+      return;
+    }
+    button.setAttribute('aria-pressed', intensity === currentHighlightIntensity ? 'true' : 'false');
+  });
+  if (highlightIntensityNote) {
+    highlightIntensityNote.textContent = highlightIntensitySettings[currentHighlightIntensity].note;
+  }
+};
+
+const applyHighlightIntensity = () => {
+  if (indexedPages.size === 0) {
+    return;
+  }
+
+  const shouldUpdateDocx =
+    currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text';
+  const docxPagesByNumber = shouldUpdateDocx
+    ? new Map(docxPages.map((page) => [page.pageNumber, page]))
+    : null;
+
+  for (const entry of indexedPages.values()) {
+    const embeddings = entry.embeddings ?? null;
+    const highlights = selectAutoHighlights(entry.sentences, embeddings);
+    entry.highlights = highlights;
+
+    if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
+      currentPageHighlightSentences = highlights;
+    }
+
+    if (docxPagesByNumber && entry.source !== 'pdf') {
+      const page = docxPagesByNumber.get(entry.pageNumber);
+      if (!page) {
+        continue;
+      }
+      clearDocxHighlights(page);
+      const textMap = buildDocxPageTextMap(page.content);
+      renderDocxPageHighlights(page, textMap, highlights);
+    }
+  }
+
+  if (currentSourceKind === 'pdf') {
+    renderHighlights();
+  }
+  renderStudyStrip();
+};
+
+const setHighlightIntensity = (intensity: HighlightIntensity) => {
+  if (currentHighlightIntensity === intensity) {
+    return;
+  }
+  currentHighlightIntensity = intensity;
+  updateHighlightIntensityControls();
+  applyHighlightIntensity();
+};
+
 const togglePinnedHighlight = (sentenceId: string) => {
   if (pinnedHighlightIds.has(sentenceId)) {
     pinnedHighlightIds.delete(sentenceId);
@@ -2650,7 +2848,7 @@ const indexPdfPage = async (
   }
 
   const highlights = selectAutoHighlights(sentences, embeddings);
-  return { source: 'pdf', pageNumber, textMap, sentences, highlights };
+  return { source: 'pdf', pageNumber, textMap, sentences, highlights, embeddings };
 };
 
 const startBackgroundIndexing = async (
@@ -2783,6 +2981,7 @@ const loadPdf = async (file: File) => {
       textMap: currentPageTextMap,
       sentences: currentPageSentences,
       highlights: currentPageHighlightSentences,
+      embeddings: null,
     });
     setExportEnabled(true);
     const highlightStats = renderHighlights();
@@ -2893,6 +3092,29 @@ bindDropzone(docxDropzone, (file) => {
   void loadDocx(file);
 });
 
+highlightModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (button.disabled) {
+      return;
+    }
+    const mode = button.dataset.highlightMode as HighlightMode | undefined;
+    if (!mode) {
+      return;
+    }
+    setHighlightMode(mode);
+  });
+});
+
+highlightIntensityButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    const intensity = button.dataset.highlightIntensity as HighlightIntensity | undefined;
+    if (!intensity) {
+      return;
+    }
+    setHighlightIntensity(intensity);
+  });
+});
+
 downloadButton?.addEventListener('click', () => {
   void exportHighlightedPdf();
 });
@@ -2989,4 +3211,6 @@ window.addEventListener('resize', () => {
   }, 150);
 });
 
+updateHighlightModeControls();
+updateHighlightIntensityControls();
 renderStudyStrip();

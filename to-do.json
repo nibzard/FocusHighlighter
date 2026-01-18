@@ -243,7 +243,14 @@
       "id": "T019",
       "title": "Implement highlight intensity control and mode toggles in UI",
       "priority": 3,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T22:26:58Z",
+      "details": "Added highlight intensity controls that adjust highlight counts and added auto/question mode toggle UI.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T020",
