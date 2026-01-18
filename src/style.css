@@ -178,15 +178,33 @@ body {
   max-width: 32ch;
 }
 
-.pdf-canvas {
+.pdf-stack {
+  position: relative;
   display: none;
+}
+
+.pdf-canvas {
+  display: block;
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 12px 30px -24px rgba(30, 22, 12, 0.5);
 }
 
-.viewer-stage.is-ready .pdf-canvas {
-  display: block;
+.highlight-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.highlight-rect {
+  position: absolute;
+  background: rgba(255, 214, 104, 0.45);
+  border-radius: 6px;
+  mix-blend-mode: multiply;
+}
+
+.viewer-stage.is-ready .pdf-stack {
+  display: inline-block;
 }
 
 .viewer-stage.is-ready .viewer-placeholder {

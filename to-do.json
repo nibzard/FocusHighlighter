@@ -68,7 +68,14 @@
       "id": "T005",
       "title": "Render highlight overlay rectangles on PDF pages from sentence ranges",
       "priority": 1,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T20:15:44Z",
+      "details": "Added PDF highlight overlay layer and rectangle mapping from sentence ranges to text items.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T006",

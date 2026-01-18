@@ -48,7 +48,10 @@ app.innerHTML = `
           <div id="viewer-placeholder" class="viewer-placeholder">
             Page 1 will appear here after upload.
           </div>
-          <canvas id="pdf-canvas" class="pdf-canvas" aria-label="PDF page preview"></canvas>
+          <div id="pdf-stack" class="pdf-stack" aria-hidden="true">
+            <canvas id="pdf-canvas" class="pdf-canvas" aria-label="PDF page preview"></canvas>
+            <div id="highlight-layer" class="highlight-layer"></div>
+          </div>
         </div>
       </article>
     </section>
@@ -62,13 +65,16 @@ const fileStatus = document.querySelector<HTMLParagraphElement>('#file-status');
 const pageIndicator = document.querySelector<HTMLSpanElement>('#page-indicator');
 const viewerStage = document.querySelector<HTMLDivElement>('#viewer-stage');
 const viewerPlaceholder = document.querySelector<HTMLDivElement>('#viewer-placeholder');
+const pdfStack = document.querySelector<HTMLDivElement>('#pdf-stack');
 const pdfCanvas = document.querySelector<HTMLCanvasElement>('#pdf-canvas');
 const pdfContext = pdfCanvas?.getContext('2d');
+const highlightLayer = document.querySelector<HTMLDivElement>('#highlight-layer');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
 let renderTask: RenderTask | null = null;
 let resizeTimer: number | undefined;
+let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
 
 type PdfTextItem = {
   str: string;
@@ -131,6 +137,7 @@ type SentenceSegmenterConstructor = new (
 
 let currentPageTextMap: PageTextMap | null = null;
 let currentPageSentences: SentenceSegment[] = [];
+const maxHighlightSentences = 4;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -171,6 +178,7 @@ const resetViewer = () => {
   currentPage = null;
   currentPageTextMap = null;
   currentPageSentences = [];
+  currentViewport = null;
   if (viewerStage) {
     viewerStage.classList.remove('is-ready');
   }
@@ -179,6 +187,9 @@ const resetViewer = () => {
   }
   if (pdfCanvas && pdfContext) {
     pdfContext.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
+  }
+  if (highlightLayer) {
+    highlightLayer.innerHTML = '';
   }
   setPageIndicator(1, null);
 };
@@ -344,6 +355,80 @@ const segmentPageText = (pageTextMap: PageTextMap, pageNumber: number): Sentence
   return sentences;
 };
 
+const getSentenceHighlightCandidates = (sentences: SentenceSegment[]) =>
+  sentences.slice(0, Math.min(maxHighlightSentences, sentences.length));
+
+const rangesOverlap = (startA: number, endA: number, startB: number, endB: number) =>
+  endA > startB && startA < endB;
+
+const getItemViewportRect = (
+  item: PdfTextItem,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+) => {
+  const [x, y] = item.transform.slice(4, 6);
+  const rect = viewport.convertToViewportRectangle([x, y, x + item.width, y + item.height]);
+  const left = Math.min(rect[0], rect[2]);
+  const top = Math.min(rect[1], rect[3]);
+  const width = Math.abs(rect[0] - rect[2]);
+  const height = Math.abs(rect[1] - rect[3]);
+
+  if (!Number.isFinite(left) || !Number.isFinite(top)) {
+    return null;
+  }
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return { left, top, width, height };
+};
+
+const renderHighlights = () => {
+  if (!highlightLayer || !currentViewport || !currentPageTextMap) {
+    if (highlightLayer) {
+      highlightLayer.innerHTML = '';
+    }
+    return { sentences: 0, rects: 0 };
+  }
+
+  const highlightSentences = getSentenceHighlightCandidates(currentPageSentences);
+  if (!highlightSentences.length) {
+    highlightLayer.innerHTML = '';
+    return { sentences: 0, rects: 0 };
+  }
+
+  const fragment = document.createDocumentFragment();
+  let rectCount = 0;
+
+  for (const sentence of highlightSentences) {
+    const overlappingItems = currentPageTextMap.itemRanges.filter((range) =>
+      rangesOverlap(range.charStart, range.charEnd, sentence.charStart, sentence.charEnd),
+    );
+
+    for (const range of overlappingItems) {
+      const item = currentPageTextMap.items[range.itemIndex];
+      const rect = getItemViewportRect(item, currentViewport);
+      if (!rect) {
+        continue;
+      }
+
+      const rectEl = document.createElement('div');
+      rectEl.className = 'highlight-rect';
+      rectEl.style.left = `${rect.left}px`;
+      rectEl.style.top = `${rect.top}px`;
+      rectEl.style.width = `${rect.width}px`;
+      rectEl.style.height = `${rect.height}px`;
+      rectEl.dataset.sentenceId = sentence.id;
+      fragment.append(rectEl);
+      rectCount += 1;
+    }
+  }
+
+  highlightLayer.innerHTML = '';
+  highlightLayer.append(fragment);
+
+  return { sentences: highlightSentences.length, rects: rectCount };
+};
+
 const renderPage = async (page: PDFPageProxy) => {
   if (!viewerStage || !pdfCanvas || !pdfContext) {
     return;
@@ -356,11 +441,16 @@ const renderPage = async (page: PDFPageProxy) => {
   const scale = Math.min(2.2, containerWidth / baseViewport.width);
   const viewport = page.getViewport({ scale });
   const outputScale = window.devicePixelRatio || 1;
+  currentViewport = viewport;
 
   pdfCanvas.width = Math.floor(viewport.width * outputScale);
   pdfCanvas.height = Math.floor(viewport.height * outputScale);
   pdfCanvas.style.width = `${viewport.width}px`;
   pdfCanvas.style.height = `${viewport.height}px`;
+  if (pdfStack) {
+    pdfStack.style.width = `${viewport.width}px`;
+    pdfStack.style.height = `${viewport.height}px`;
+  }
 
   const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
   renderTask = page.render({ canvasContext: pdfContext, viewport, transform });
@@ -400,8 +490,9 @@ const loadPdf = async (file: File) => {
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
+    const highlightStats = renderHighlights();
     setStatus(
-      `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items and ${currentPageSentences.length} sentences.`,
+      `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences, highlighted ${highlightStats.sentences} sentences.`,
     );
   } catch (error) {
     console.error(error);
@@ -447,6 +538,8 @@ window.addEventListener('resize', () => {
   }
   window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(() => {
-    void renderPage(currentPage);
+    void renderPage(currentPage).then(() => {
+      renderHighlights();
+    });
   }, 150);
 });
