@@ -270,11 +270,11 @@
       "title": "Add performance guardrails: caps, batching, yield to UI, optional Web Worker",
       "priority": 3,
       "status": "done",
-      "updated_at": "2026-01-18T23:03:08Z",
+      "updated_at": "2026-01-18T23:04:26Z",
       "details": "Added caps for auto-indexed pages/sentences, batched embeddings with UI yields, and a worker-backed embedding option.",
       "files": [
-        "src/main.ts",
         "src/embedding.worker.ts",
+        "src/main.ts",
         "to-do.json"
       ]
     },
@@ -283,7 +283,7 @@
       "title": "Add privacy/security disclosures and HTML sanitization for rendered content",
       "priority": 3,
       "status": "done",
-      "updated_at": "2026-01-18T23:07:42Z",
+      "updated_at": "2026-01-18T23:09:33Z",
       "details": "Added privacy/security disclosure panel and documented sanitization for reading view content.",
       "files": [
         "src/main.ts",
@@ -295,7 +295,14 @@
       "id": "T023",
       "title": "Handle scanned PDFs with empty text extraction and user-facing warning",
       "priority": 3,
-      "status": "todo"
+      "status": "done",
+      "updated_at": "2026-01-18T23:13:57Z",
+      "details": "Added a scanned PDF warning when text extraction is empty.",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T024",

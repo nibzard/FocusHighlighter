@@ -658,6 +658,16 @@ select:focus-visible,
   font-size: 0.9rem;
 }
 
+.warning-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(224, 122, 46, 0.35);
+  background: rgba(255, 214, 104, 0.25);
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
 .export-panel {
   display: grid;
   gap: 8px;

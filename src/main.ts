@@ -205,6 +205,7 @@ app.innerHTML = `
             <div id="progress-fill" class="progress-fill"></div>
           </div>
           <p id="progress-status" class="muted progress-status">Waiting for document upload.</p>
+          <p id="scan-warning" class="warning-note" hidden></p>
         </div>
         <div class="export-panel">
           <button id="download-highlighted" class="primary-button" type="button" disabled>
@@ -258,6 +259,7 @@ const pdfContext = pdfCanvas?.getContext('2d');
 const highlightLayer = document.querySelector<HTMLDivElement>('#highlight-layer');
 const docxViewer = document.querySelector<HTMLDivElement>('#docx-viewer');
 const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-status');
+const scanWarning = document.querySelector<HTMLParagraphElement>('#scan-warning');
 const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
 const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
 const downloadButton = document.querySelector<HTMLButtonElement>('#download-highlighted');
@@ -535,6 +537,7 @@ let backgroundTotalPages = 0;
 let pdfNavigationId = 0;
 let autoSentenceCount = 0;
 let autoSentenceCapReached = false;
+let pdfHasExtractedText = false;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -1147,6 +1150,37 @@ const setStatus = (message: string) => {
   }
 };
 
+const scannedPdfWarning =
+  'This looks like a scanned PDF (image-only). OCR is not included in MVP.';
+
+const setScanWarning = (message: string | null) => {
+  if (!scanWarning) {
+    return;
+  }
+  if (!message) {
+    scanWarning.textContent = '';
+    scanWarning.hidden = true;
+    return;
+  }
+  scanWarning.textContent = message;
+  scanWarning.hidden = false;
+};
+
+const updatePdfScanWarning = (textMap: PageTextMap) => {
+  if (currentSourceKind !== 'pdf') {
+    return;
+  }
+  const hasText = textMap.fullText.trim().length > 0;
+  if (hasText) {
+    pdfHasExtractedText = true;
+    setScanWarning(null);
+    return;
+  }
+  if (!pdfHasExtractedText) {
+    setScanWarning(scannedPdfWarning);
+  }
+};
+
 const notifySentenceCap = () => {
   const message = getSentenceCapMessage();
   setStatus(message);
@@ -1276,10 +1310,12 @@ const resetViewer = () => {
   backgroundProcessId += 1;
   autoSentenceCount = 0;
   autoSentenceCapReached = false;
+  pdfHasExtractedText = false;
   indexedPages.clear();
   resetProgress();
   setExportEnabled(false);
   setViewerMode(null);
+  setScanWarning(null);
   if (viewerPlaceholder) {
     viewerPlaceholder.textContent = 'Document preview will appear here after upload.';
   }
@@ -3492,6 +3528,7 @@ const indexPdfPage = async (
   if (processId !== backgroundProcessId) {
     return null;
   }
+  updatePdfScanWarning(textMap);
 
   const sentences = segmentPageText(textMap, pageNumber);
   const capped = clampSentencesForAutoIndexing(sentences);
@@ -3672,11 +3709,13 @@ const goToPdfPage = async (pageNumber: number) => {
     currentPageSentences = cached.sentences;
     currentPageEmbeddings = cached.embeddings;
     currentPageHighlightSentences = cached.highlights;
+    updatePdfScanWarning(currentPageTextMap);
   } else {
     currentPageTextMap = await extractPageTextMap(page);
     if (navigationId !== pdfNavigationId) {
       return;
     }
+    updatePdfScanWarning(currentPageTextMap);
     currentPageSentences = segmentPageText(currentPageTextMap, clamped);
     currentPageEmbeddings = null;
     updateAutoHighlights(currentPageSentences, null);
@@ -3731,6 +3770,7 @@ const loadPdf = async (file: File) => {
     setStatus(`Rendering page 1 of ${pdfDoc.numPages}...`);
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
+    updatePdfScanWarning(currentPageTextMap);
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     const capped = clampSentencesForAutoIndexing(currentPageSentences);
     currentPageSentences = capped.sentences;
