@@ -46,19 +46,23 @@ Notes:
    - Page 1 renders quickly with visible highlights.
    - Auto-highlight status updates appear and complete.
    - Study Strip lists verbatim highlighted sentences for the correct page or virtual page.
-2. Question mode (cross-language):
+2. PDF navigation during embeddings:
+   - Upload a PDF and jump to page 2 before embeddings finish on page 1.
+   - Confirm page 2 highlights stay aligned with page 2 (no page 1 overwrite).
+   - Return to page 1 and confirm highlights update correctly once embeddings finish.
+3. Question mode (cross-language):
    - Ask an English question while viewing the Chinese or Arabic sample.
    - Expect highlights to shift toward relevant sentences.
-3. Pin/unpin:
+4. Pin/unpin:
    - Pin one highlight and verify it appears in Study Strip pinned group.
-4. Export gating (partial coverage):
+5. Export gating (partial coverage):
    - Trigger export before indexing completes (or when page/sentence caps apply).
    - Expect a confirmation message explaining partial coverage; cancel keeps status message.
    - Confirming proceeds with export and indicates partial coverage in status text.
-5. Export:
+6. Export:
    - Use "Download highlighted PDF" and verify the file opens with highlights present.
    - Use "Copy" and "Download highlights.md" from Study Strip.
-6. Basic accessibility:
+7. Basic accessibility:
    - Navigate pages with keyboard shortcuts and verify focus remains visible.
    - Toggle list view to confirm readable contrast and non-color cues for intensity.
    - Use the page jump input with keyboard-only navigation.

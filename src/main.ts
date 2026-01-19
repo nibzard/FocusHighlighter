@@ -1261,8 +1261,8 @@ const runPageEmbeddings = async (
 
   const requestId = ++embeddingRequestId;
   const preferredDevice = getEmbeddingDevice();
-  const isCurrentPage = currentPage?.pageNumber === pageNumber;
-  if (isCurrentPage) {
+  const isCurrentPageNow = () => currentPage?.pageNumber === pageNumber;
+  if (isCurrentPageNow()) {
     setStatus(`${statusPrefix} Loading embeddings (${formatEmbeddingDeviceLabel(preferredDevice)})...`);
   }
 
@@ -1272,7 +1272,7 @@ const runPageEmbeddings = async (
       return;
     }
     if (!pooledEmbeddings) {
-      if (isCurrentPage) {
+      if (isCurrentPageNow()) {
         setStatus(`${statusPrefix} Embeddings loaded but could not be parsed.`);
       }
       return;
@@ -1296,7 +1296,7 @@ const runPageEmbeddings = async (
         questionHighlightEmphasis: questionSelection.emphasis,
         embeddings: pooledEmbeddings,
       });
-    } else if (isCurrentPage && currentPageTextMap) {
+    } else if (isCurrentPageNow() && currentPageTextMap) {
       indexedPages.set(pageNumber, {
         source: 'pdf',
         pageNumber,
@@ -1310,7 +1310,7 @@ const runPageEmbeddings = async (
       });
     }
 
-    if (isCurrentPage) {
+    if (isCurrentPageNow()) {
       currentPageEmbeddings = pooledEmbeddings;
       currentPageHighlightSentences = autoHighlights;
       currentPageHighlightEmphasis = autoSelection.emphasis;
@@ -1342,7 +1342,7 @@ const runPageEmbeddings = async (
       return;
     }
     console.error(error);
-    if (isCurrentPage) {
+    if (isCurrentPageNow()) {
       setStatus(`${statusPrefix} Embeddings failed to load.`);
     }
   }

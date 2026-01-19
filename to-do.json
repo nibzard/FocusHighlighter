@@ -742,18 +742,18 @@
         "security"
       ],
       "files": [
-        "src/highlight-utils.ts",
         "src/highlight-utils.test.ts",
+        "src/highlight-utils.ts",
         "to-do.json"
       ],
-      "updated_at": "2026-01-19T13:10:24Z"
+      "updated_at": "2026-01-19T13:10:48Z"
     },
     {
       "id": "T049",
       "title": "Guard PDF page-1 embedding updates after navigation",
       "priority": 2,
-      "status": "todo",
-      "details": "runPageEmbeddings captures the current page at start; if the user navigates before embeddings finish, it can overwrite currentPage state and highlights for the wrong page. Re-check currentPage/page nav token before applying updates and add a regression QA note or test.",
+      "status": "done",
+      "details": "Re-checked current page before applying page-1 embedding updates to avoid cross-page highlight updates; added a QA step for navigation during embeddings.",
       "tags": [
         "bugfix",
         "pdf",
@@ -761,8 +761,10 @@
       ],
       "files": [
         "src/main.ts",
-        "qa/SMOKE_TEST_PLAN.md"
-      ]
+        "qa/SMOKE_TEST_PLAN.md",
+        "to-do.json"
+      ],
+      "updated_at": "2026-01-19T13:15:45Z"
     }
   ]
 }
