@@ -18,6 +18,9 @@
   --highlight-fill: rgba(255, 214, 104, 0.45);
   --highlight-inline: rgba(255, 214, 104, 0.5);
   --highlight-outline: rgba(224, 122, 46, 0.35);
+  --question-fill: rgba(105, 190, 170, 0.18);
+  --question-inline: rgba(105, 190, 170, 0.24);
+  --question-outline: rgba(30, 121, 108, 0.75);
   --focus-ring: rgba(224, 122, 46, 0.6);
 }
 
@@ -25,6 +28,9 @@
   --highlight-fill: rgba(255, 187, 79, 0.6);
   --highlight-inline: rgba(255, 187, 79, 0.65);
   --highlight-outline: rgba(173, 79, 26, 0.7);
+  --question-fill: rgba(105, 190, 170, 0.32);
+  --question-inline: rgba(105, 190, 170, 0.4);
+  --question-outline: rgba(30, 121, 108, 0.9);
   --focus-ring: rgba(173, 79, 26, 0.8);
 }
 
@@ -33,6 +39,9 @@
     --highlight-fill: rgba(255, 187, 79, 0.6);
     --highlight-inline: rgba(255, 187, 79, 0.65);
     --highlight-outline: rgba(173, 79, 26, 0.7);
+    --question-fill: rgba(105, 190, 170, 0.32);
+    --question-inline: rgba(105, 190, 170, 0.4);
+    --question-outline: rgba(30, 121, 108, 0.9);
     --focus-ring: rgba(173, 79, 26, 0.8);
   }
 }
@@ -528,6 +537,10 @@ select:focus-visible,
   background: rgba(255, 248, 236, 0.92);
 }
 
+.highlight-list-item.is-question {
+  box-shadow: inset 4px 0 0 0 var(--question-outline);
+}
+
 .highlight-list-item.pinned {
   border-color: rgba(224, 122, 46, 0.45);
   background: rgba(255, 238, 214, 0.96);
@@ -603,6 +616,16 @@ select:focus-visible,
   -webkit-box-decoration-break: clone;
 }
 
+.docx-highlight.is-question {
+  background: var(--highlight-inline);
+  box-shadow:
+    inset 0 0 0 1px var(--highlight-outline),
+    inset 0 0 0 2px var(--question-outline);
+  text-decoration: underline dashed var(--question-outline);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
+}
+
 .highlight-layer {
   position: absolute;
   inset: 0;
@@ -615,6 +638,14 @@ select:focus-visible,
   border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--highlight-outline);
   mix-blend-mode: multiply;
+}
+
+.highlight-rect.is-question {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--question-outline);
+  outline: 2px dashed var(--question-outline);
+  outline-offset: -2px;
+  mix-blend-mode: normal;
 }
 
 .viewer-stage.is-ready .pdf-stack {
@@ -840,6 +871,10 @@ select:focus-visible,
   background: rgba(255, 248, 236, 0.92);
 }
 
+.strip-item.is-question {
+  box-shadow: inset 4px 0 0 0 var(--question-outline);
+}
+
 .strip-item.pinned {
   border-color: rgba(224, 122, 46, 0.45);
   background: rgba(255, 238, 214, 0.96);
@@ -876,7 +911,9 @@ select:focus-visible,
 
 @media (forced-colors: active) {
   .highlight-rect,
-  .docx-highlight {
+  .highlight-rect.is-question,
+  .docx-highlight,
+  .docx-highlight.is-question {
     forced-color-adjust: none;
     background: Highlight;
     outline: 1px solid CanvasText;
@@ -884,10 +921,17 @@ select:focus-visible,
 
   .highlight-list,
   .highlight-list-item,
-  .strip-item {
+  .highlight-list-item.is-question,
+  .strip-item,
+  .strip-item.is-question {
     forced-color-adjust: none;
     border-color: CanvasText;
     background: Canvas;
+  }
+
+  .highlight-list-item.is-question,
+  .strip-item.is-question {
+    box-shadow: inset 3px 0 0 0 CanvasText;
   }
 }
 

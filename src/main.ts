@@ -114,7 +114,7 @@ app.innerHTML = `
                 Question
               </button>
             </div>
-            <p id="mode-note" class="muted control-note">Auto mode selects key sentences.</p>
+            <p id="mode-note" class="muted control-note">Auto mode selects key sentences. Question adds answers on top.</p>
           </div>
           <div class="control-group question-group" id="question-group" hidden>
             <label class="control-label" for="question-input">Question</label>
@@ -129,7 +129,7 @@ app.innerHTML = `
               />
               <button id="question-apply" class="secondary-button" type="button">Highlight</button>
             </div>
-            <p id="question-note" class="muted control-note">Ask a question to highlight answers.</p>
+            <p id="question-note" class="muted control-note">Ask a question to layer answers on top of auto highlights.</p>
           </div>
           <div class="control-group">
             <p class="control-label">Intensity</p>
@@ -1194,15 +1194,20 @@ const runPageEmbeddings = async (
 
     if (isCurrentPage) {
       currentPageEmbeddings = pooledEmbeddings;
-      currentPageHighlightSentences =
-        currentHighlightMode === 'question' ? questionHighlights : autoHighlights;
-      const highlightStats = renderHighlights();
+      currentPageHighlightSentences = autoHighlights;
+      renderHighlights();
       if (currentViewMode === 'list') {
         renderHighlightListView();
       }
       const activeDevice = embeddingBackend ?? preferredDevice;
+      const showQuestionHighlights =
+        currentHighlightMode === 'question' && Boolean(currentQuestionEmbedding && currentQuestionQuery);
+      const questionNote =
+        showQuestionHighlights && questionHighlights.length > 0
+          ? ` Added ${questionHighlights.length} question overlays.`
+          : '';
       setStatus(
-        `${statusPrefix} Auto-highlighted ${highlightStats.sentences} sentences with embeddings (${formatEmbeddingDeviceLabel(activeDevice)}).`,
+        `${statusPrefix} Auto-highlighted ${autoHighlights.length} sentences with embeddings (${formatEmbeddingDeviceLabel(activeDevice)}).${questionNote}`,
       );
     }
     if (pooledEmbeddings.length > 1) {
@@ -2108,7 +2113,13 @@ const findTextNodePosition = (root: HTMLElement, offset: number) => {
   return null;
 };
 
-const applyInlineHighlight = (block: HTMLElement, startOffset: number, endOffset: number, sentenceId: string) => {
+const applyInlineHighlight = (
+  block: HTMLElement,
+  startOffset: number,
+  endOffset: number,
+  sentenceId: string,
+  className = 'docx-highlight',
+) => {
   if (startOffset >= endOffset) {
     return false;
   }
@@ -2127,7 +2138,7 @@ const applyInlineHighlight = (block: HTMLElement, startOffset: number, endOffset
   }
 
   const highlight = document.createElement('span');
-  highlight.className = 'docx-highlight';
+  highlight.className = className;
   highlight.dataset.sentenceId = sentenceId;
   highlight.append(range.extractContents());
   range.insertNode(highlight);
@@ -2159,6 +2170,7 @@ const renderDocxPageHighlights = (
   page: DocxPage,
   textMap: DocxPageTextMap,
   highlights: SentenceSegment[],
+  questionHighlightIds: Set<string> = new Set(),
 ) => {
   if (!highlights.length) {
     return 0;
@@ -2180,7 +2192,10 @@ const renderDocxPageHighlights = (
     if (startOffset < 0 || endOffset <= startOffset) {
       continue;
     }
-    if (applyInlineHighlight(block.element, startOffset, endOffset, sentence.id)) {
+    const className = questionHighlightIds.has(sentence.id)
+      ? 'docx-highlight is-question'
+      : 'docx-highlight';
+    if (applyInlineHighlight(block.element, startOffset, endOffset, sentence.id, className)) {
       rendered += 1;
     }
   }
@@ -2228,8 +2243,16 @@ const indexDocxPage = async (
     currentQuestionEmbedding && currentQuestionQuery
       ? selectQuestionHighlights(effectiveSentences, embeddings, currentQuestionEmbedding)
       : [];
-  const activeHighlights = currentHighlightMode === 'question' ? questionHighlights : highlights;
-  renderDocxPageHighlights(page, textMap, activeHighlights);
+  const showQuestionHighlights = shouldShowQuestionHighlights();
+  const displayHighlights =
+    showQuestionHighlights && questionHighlights.length > 0
+      ? mergeHighlightSets(highlights, questionHighlights)
+      : highlights;
+  const questionHighlightIds =
+    showQuestionHighlights && questionHighlights.length > 0
+      ? new Set(questionHighlights.map((sentence) => sentence.id))
+      : new Set<string>();
+  renderDocxPageHighlights(page, textMap, displayHighlights, questionHighlightIds);
   registerAutoSentenceCount(effectiveSentences.length);
   return {
     source: sourceKind,
@@ -2925,14 +2948,42 @@ const selectQuestionHighlights = (
   return selected.length > 0 ? selected : scored.slice(0, targetCount).map((entry) => entry.sentence);
 };
 
+const mergeHighlightSets = (base: SentenceSegment[], overlay: SentenceSegment[]) => {
+  if (!overlay.length) {
+    return base;
+  }
+  const seen = new Set(base.map((sentence) => sentence.id));
+  const merged = base.slice();
+  for (const sentence of overlay) {
+    if (seen.has(sentence.id)) {
+      continue;
+    }
+    seen.add(sentence.id);
+    merged.push(sentence);
+  }
+  return merged;
+};
+
+const shouldShowQuestionHighlights = () =>
+  currentHighlightMode === 'question' && Boolean(currentQuestionEmbedding && currentQuestionQuery);
+
+const getQuestionHighlightsForEntry = (entry: IndexedPage) =>
+  shouldShowQuestionHighlights() ? entry.questionHighlights ?? [] : [];
+
+const getQuestionHighlightIdsForEntry = (entry: IndexedPage) => {
+  const questionHighlights = getQuestionHighlightsForEntry(entry);
+  if (!questionHighlights.length) {
+    return new Set<string>();
+  }
+  return new Set(questionHighlights.map((sentence) => sentence.id));
+};
+
 const updateAutoHighlights = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
 ) => {
   const highlights = selectAutoHighlights(sentences, embeddings);
-  if (currentHighlightMode === 'auto') {
-    currentPageHighlightSentences = highlights;
-  }
+  currentPageHighlightSentences = highlights;
   return highlights;
 };
 
@@ -3005,48 +3056,58 @@ const renderHighlights = () => {
   }
 
   const fallbackCount = getHighlightTargetCount(currentPageSentences.length);
-  const highlightSentences =
+  const autoHighlights =
     currentPageHighlightSentences.length > 0
       ? currentPageHighlightSentences
-      : currentHighlightMode === 'question'
-        ? []
-        : currentPageSentences.slice(0, fallbackCount);
-  if (!highlightSentences.length) {
+      : currentPageSentences.slice(0, fallbackCount);
+  const entry = currentPage ? indexedPages.get(currentPage.pageNumber) : null;
+  const questionHighlights = entry ? getQuestionHighlightsForEntry(entry) : [];
+  const displayHighlights =
+    questionHighlights.length > 0 ? mergeHighlightSets(autoHighlights, questionHighlights) : autoHighlights;
+  if (!displayHighlights.length) {
     highlightLayer.innerHTML = '';
     return { sentences: 0, rects: 0 };
   }
 
   const fragment = document.createDocumentFragment();
   let rectCount = 0;
+  const sentenceIds = new Set(displayHighlights.map((sentence) => sentence.id));
 
-  for (const sentence of highlightSentences) {
-    const overlappingItems = currentPageTextMap.itemRanges.filter((range) =>
-      rangesOverlap(range.charStart, range.charEnd, sentence.charStart, sentence.charEnd),
-    );
+  const renderRectsForSentences = (sentences: SentenceSegment[], className: string) => {
+    for (const sentence of sentences) {
+      const overlappingItems = currentPageTextMap.itemRanges.filter((range) =>
+        rangesOverlap(range.charStart, range.charEnd, sentence.charStart, sentence.charEnd),
+      );
 
-    for (const range of overlappingItems) {
-      const item = currentPageTextMap.items[range.itemIndex];
-      const rect = getItemViewportRect(item, currentViewport);
-      if (!rect) {
-        continue;
+      for (const range of overlappingItems) {
+        const item = currentPageTextMap.items[range.itemIndex];
+        const rect = getItemViewportRect(item, currentViewport);
+        if (!rect) {
+          continue;
+        }
+
+        const rectEl = document.createElement('div');
+        rectEl.className = className;
+        rectEl.style.left = `${rect.left}px`;
+        rectEl.style.top = `${rect.top}px`;
+        rectEl.style.width = `${rect.width}px`;
+        rectEl.style.height = `${rect.height}px`;
+        rectEl.dataset.sentenceId = sentence.id;
+        fragment.append(rectEl);
+        rectCount += 1;
       }
-
-      const rectEl = document.createElement('div');
-      rectEl.className = 'highlight-rect';
-      rectEl.style.left = `${rect.left}px`;
-      rectEl.style.top = `${rect.top}px`;
-      rectEl.style.width = `${rect.width}px`;
-      rectEl.style.height = `${rect.height}px`;
-      rectEl.dataset.sentenceId = sentence.id;
-      fragment.append(rectEl);
-      rectCount += 1;
     }
+  };
+
+  renderRectsForSentences(displayHighlights, 'highlight-rect');
+  if (questionHighlights.length > 0) {
+    renderRectsForSentences(questionHighlights, 'highlight-rect is-question');
   }
 
   highlightLayer.innerHTML = '';
   highlightLayer.append(fragment);
 
-  return { sentences: highlightSentences.length, rects: rectCount };
+  return { sentences: sentenceIds.size, rects: rectCount };
 };
 
 const getAutoHighlightsForEntry = (entry: IndexedPage) => {
@@ -3061,13 +3122,12 @@ const getAutoHighlightsForEntry = (entry: IndexedPage) => {
 };
 
 const getActiveHighlightsForEntry = (entry: IndexedPage) => {
-  if (currentHighlightMode === 'question') {
-    if (!currentQuestionEmbedding || !currentQuestionQuery) {
-      return [];
-    }
-    return entry.questionHighlights ?? [];
+  const autoHighlights = getAutoHighlightsForEntry(entry);
+  const questionHighlights = getQuestionHighlightsForEntry(entry);
+  if (!questionHighlights.length) {
+    return autoHighlights;
   }
-  return getAutoHighlightsForEntry(entry);
+  return mergeHighlightSets(autoHighlights, questionHighlights);
 };
 
 const sortHighlightsByPosition = (a: SentenceSegment, b: SentenceSegment) => {
@@ -3205,7 +3265,16 @@ const getTotalPages = () => {
 
 const getHighlightListState = (pageNumber: number | null) => {
   if (!pageNumber) {
-    return { highlights: [] as SentenceSegment[], ready: false };
+    return { highlights: [] as SentenceSegment[], questionIds: new Set<string>(), ready: false };
+  }
+
+  const entry = indexedPages.get(pageNumber);
+  if (entry) {
+    return {
+      highlights: getActiveHighlightsForEntry(entry),
+      questionIds: getQuestionHighlightIdsForEntry(entry),
+      ready: true,
+    };
   }
 
   if (currentSourceKind === 'pdf' && currentPage?.pageNumber === pageNumber) {
@@ -3213,18 +3282,11 @@ const getHighlightListState = (pageNumber: number | null) => {
     const highlights =
       currentPageHighlightSentences.length > 0
         ? currentPageHighlightSentences
-        : currentHighlightMode === 'question'
-          ? []
-          : currentPageSentences.slice(0, fallbackCount);
-    return { highlights, ready: true };
+        : currentPageSentences.slice(0, fallbackCount);
+    return { highlights, questionIds: new Set<string>(), ready: true };
   }
 
-  const entry = indexedPages.get(pageNumber);
-  if (!entry) {
-    return { highlights: [] as SentenceSegment[], ready: false };
-  }
-
-  return { highlights: getActiveHighlightsForEntry(entry), ready: true };
+  return { highlights: [] as SentenceSegment[], questionIds: new Set<string>(), ready: false };
 };
 
 const renderHighlightListView = () => {
@@ -3262,7 +3324,7 @@ const renderHighlightListView = () => {
     metaEl.textContent = 'Page preview not ready yet.';
   } else {
     titleEl.textContent = `Highlights for page ${pageNumber}`;
-    const { highlights, ready } = getHighlightListState(pageNumber);
+    const { highlights, questionIds, ready } = getHighlightListState(pageNumber);
     const pageMeta = totalPages ? `Page ${pageNumber} of ${totalPages}` : `Page ${pageNumber}`;
     if (!ready) {
       metaEl.textContent = `${pageMeta} - Processing highlights.`;
@@ -3278,8 +3340,9 @@ const renderHighlightListView = () => {
     } else {
       for (const sentence of highlights) {
         const isPinned = pinnedHighlightIds.has(sentence.id);
+        const isQuestion = questionIds.has(sentence.id);
         const itemEl = document.createElement('div');
-        itemEl.className = `highlight-list-item${isPinned ? ' pinned' : ''}`;
+        itemEl.className = `highlight-list-item${isPinned ? ' pinned' : ''}${isQuestion ? ' is-question' : ''}`;
         itemEl.setAttribute('role', 'listitem');
 
         const textEl = document.createElement('p');
@@ -3319,6 +3382,8 @@ const renderStudyStrip = () => {
   for (const section of sections) {
     const groupEl = document.createElement('div');
     groupEl.className = 'strip-group';
+    const entry = indexedPages.get(section.pageNumber);
+    const questionIds = entry ? getQuestionHighlightIdsForEntry(entry) : new Set<string>();
 
     const headerEl = document.createElement('div');
     headerEl.className = 'strip-group-header';
@@ -3339,13 +3404,14 @@ const renderStudyStrip = () => {
       totalHighlights += 1;
       activeIds.add(sentence.id);
       const isPinned = pinnedHighlightIds.has(sentence.id);
+      const isQuestion = questionIds.has(sentence.id);
       if (isPinned) {
         totalPinned += 1;
         pinnedInGroup += 1;
       }
 
       const itemEl = document.createElement('div');
-      itemEl.className = `strip-item${isPinned ? ' pinned' : ''}`;
+      itemEl.className = `strip-item${isPinned ? ' pinned' : ''}${isQuestion ? ' is-question' : ''}`;
       itemEl.setAttribute('role', 'listitem');
 
       const textEl = document.createElement('p');
@@ -3431,7 +3497,8 @@ const renderDocxHighlightsForMode = () => {
     clearDocxHighlights(page);
     const textMap = buildDocxPageTextMap(page.content);
     const highlights = getActiveHighlightsForEntry(entry);
-    renderDocxPageHighlights(page, textMap, highlights);
+    const questionHighlightIds = getQuestionHighlightIdsForEntry(entry);
+    renderDocxPageHighlights(page, textMap, highlights, questionHighlightIds);
   }
 };
 
@@ -3440,14 +3507,12 @@ const applyHighlightMode = () => {
     if (currentPage) {
       const entry = indexedPages.get(currentPage.pageNumber);
       if (entry) {
-        currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
-      } else if (currentHighlightMode === 'auto') {
+        currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+      } else {
         currentPageHighlightSentences = selectAutoHighlights(
           currentPageSentences,
           currentPageEmbeddings,
         );
-      } else {
-        currentPageHighlightSentences = [];
       }
       renderHighlights();
     }
@@ -3509,7 +3574,7 @@ const updateQuestionHighlightsForPages = async (
 
     entry.questionHighlights = selectQuestionHighlights(entry.sentences, embeddings ?? null, queryEmbedding);
     if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
-      currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
+      currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
     }
 
     if (index % 2 === 1) {
@@ -3600,10 +3665,10 @@ const updateHighlightModeControls = () => {
   if (highlightModeNote) {
     if (currentHighlightMode === 'question') {
       highlightModeNote.textContent = currentQuestionQuery
-        ? `Question mode highlighting: "${currentQuestionQuery}".`
-        : 'Question mode highlights answers to your prompt.';
+        ? `Question mode adds answers for "${currentQuestionQuery}" on top of auto highlights.`
+        : 'Question mode layers answer highlights on top of auto highlights.';
     } else {
-      highlightModeNote.textContent = 'Auto mode selects key sentences. Switch to Question to highlight answers.';
+      highlightModeNote.textContent = 'Auto mode selects key sentences. Question adds answers on top.';
     }
   }
   if (questionGroup) {
@@ -3611,11 +3676,11 @@ const updateHighlightModeControls = () => {
   }
   if (questionNote) {
     if (currentHighlightMode !== 'question') {
-      questionNote.textContent = 'Switch to Question mode to highlight answers.';
+      questionNote.textContent = 'Switch to Question mode to layer answers on top of auto highlights.';
     } else if (currentQuestionQuery) {
-      questionNote.textContent = `Showing answers for "${currentQuestionQuery}".`;
+      questionNote.textContent = `Showing answers for "${currentQuestionQuery}" on top of auto highlights.`;
     } else {
-      questionNote.textContent = 'Enter a question to highlight answers.';
+      questionNote.textContent = 'Enter a question to layer answers on top of auto highlights.';
     }
   }
 };
@@ -3672,7 +3737,7 @@ const applyHighlightIntensity = () => {
 
     const activeHighlights = getActiveHighlightsForEntry(entry);
     if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
-      currentPageHighlightSentences = activeHighlights;
+      currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
     }
 
     if (docxPagesByNumber && entry.source !== 'pdf') {
@@ -3682,7 +3747,8 @@ const applyHighlightIntensity = () => {
       }
       clearDocxHighlights(page);
       const textMap = buildDocxPageTextMap(page.content);
-      renderDocxPageHighlights(page, textMap, activeHighlights);
+      const questionHighlightIds = getQuestionHighlightIdsForEntry(entry);
+      renderDocxPageHighlights(page, textMap, activeHighlights, questionHighlightIds);
     }
   }
 
@@ -4160,7 +4226,7 @@ const goToPdfPage = async (pageNumber: number) => {
         currentQuestionEmbedding,
       );
     }
-    currentPageHighlightSentences = getActiveHighlightsForEntry(cached);
+    currentPageHighlightSentences = getAutoHighlightsForEntry(cached);
     updatePdfScanWarning(currentPageTextMap);
   } else {
     currentPageTextMap = await extractPageTextMap(page);
@@ -4181,7 +4247,7 @@ const goToPdfPage = async (pageNumber: number) => {
       embeddings: null,
     };
     indexedPages.set(clamped, entry);
-    currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
+    currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
   }
 
   const highlightStats = renderHighlights();
@@ -4240,7 +4306,7 @@ const loadPdf = async (file: File) => {
       embeddings: null,
     };
     indexedPages.set(currentPage.pageNumber, entry);
-    currentPageHighlightSentences = getActiveHighlightsForEntry(entry);
+    currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
     registerAutoSentenceCount(currentPageSentences.length);
     setExportEnabled(true);
     const highlightStats = renderHighlights();

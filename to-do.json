@@ -408,7 +408,7 @@
         "question"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T09:07:29Z",
+      "updated_at": "2026-01-19T09:07:55Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -418,15 +418,20 @@
       "id": "T030",
       "title": "Layer question highlights on top of auto highlights",
       "priority": 2,
-      "status": "todo",
-      "details": "Align question mode with spec by keeping auto highlights visible and overlaying question highlights with clear UI controls.",
+      "status": "done",
+      "details": "Question mode now layers answer overlays on top of auto highlights across the viewer, list, and study strip.",
       "tags": [
         "highlighting",
         "question",
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T09:25:28Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T031",
