@@ -1784,6 +1784,13 @@ const isDocxFile = (file: File) => {
   return file.name.toLowerCase().endsWith('.docx');
 };
 
+const isPdfFile = (file: File) => {
+  if (file.type) {
+    return file.type.includes('pdf');
+  }
+  return file.name.toLowerCase().endsWith('.pdf');
+};
+
 const getReadingLabel = (sourceKind: ReadingSourceKind) => {
   if (sourceKind === 'url') {
     return 'URL';
@@ -4446,7 +4453,7 @@ const goToPdfPage = async (pageNumber: number) => {
 };
 
 const loadPdf = async (file: File) => {
-  if (!file.type.includes('pdf')) {
+  if (!isPdfFile(file)) {
     setStatus('That file is not a PDF. Please choose a .pdf file.');
     return;
   }

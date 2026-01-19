@@ -624,15 +624,63 @@
         "qa"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T11:35:46Z",
+      "updated_at": "2026-01-19T11:37:04Z",
       "blockers": [],
       "files": [
-        "src/main.ts",
+        "package-lock.json",
+        "package.json",
+        "playwright.config.ts",
         "qa/SMOKE_TEST_PLAN.md",
         "qa/smoke.spec.ts",
-        "playwright.config.ts",
-        "package.json",
-        "package-lock.json",
+        "src/main.ts",
+        "to-do.json"
+      ]
+    },
+    {
+      "id": "T042",
+      "title": "Accept PDFs with missing MIME types in upload validation",
+      "priority": 1,
+      "status": "done",
+      "details": "Accepted PDFs with empty MIME types by falling back to the .pdf extension check.",
+      "tags": [
+        "bugfix",
+        "pdf",
+        "upload"
+      ],
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ],
+      "updated_at": "2026-01-19T11:48:49Z"
+    },
+    {
+      "id": "T043",
+      "title": "Destroy previous PDF.js documents on reset",
+      "priority": 3,
+      "status": "todo",
+      "details": "Call pdfDoc.destroy() before clearing state so repeated uploads do not leak PDF.js resources.",
+      "tags": [
+        "performance",
+        "pdf"
+      ],
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
+    },
+    {
+      "id": "T044",
+      "title": "Skip synthetic spaces between CJK characters during PDF text extraction",
+      "priority": 2,
+      "status": "todo",
+      "details": "Refine needsSyntheticSpace to avoid inserting spaces between Han/Kana/Hangul runs so extracted text and Study Strip remain verbatim for CJK PDFs.",
+      "tags": [
+        "bugfix",
+        "pdf",
+        "i18n"
+      ],
+      "files": [
+        "src/main.ts",
         "to-do.json"
       ]
     }
