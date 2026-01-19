@@ -1373,13 +1373,13 @@ const getExportNote = (mode: DocumentSourceKind) => {
     return 'Embeds highlight rectangles into the original PDF.';
   }
   if (mode === 'docx') {
-    return 'Generates a highlighted PDF from the reading view; layout may differ from the original DOCX.';
+    return 'Creates an image-based highlighted PDF from the reading view (html2canvas), so text may not be selectable; layout may differ from the original DOCX.';
   }
   if (mode === 'url') {
-    return 'Generates a highlighted PDF from the reading view; layout may differ from the original web page.';
+    return 'Creates an image-based highlighted PDF from the reading view (html2canvas), so text may not be selectable; layout may differ from the original web page.';
   }
   if (mode === 'text') {
-    return 'Generates a highlighted PDF from the reading view of your pasted text.';
+    return 'Creates an image-based highlighted PDF from the reading view (html2canvas), so text may not be selectable.';
   }
   return 'Upload a document to enable export.';
 };

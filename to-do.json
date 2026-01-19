@@ -516,7 +516,7 @@
         "study-strip"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T10:12:04Z",
+      "updated_at": "2026-01-19T10:14:01Z",
       "files": [
         "src/main.ts",
         "src/style.css",
@@ -527,14 +527,18 @@
       "id": "T036",
       "title": "Clarify reading-view export limitations",
       "priority": 3,
-      "status": "todo",
-      "details": "Add UI copy noting that html2canvas exports may be image-based and text may not be selectable; consider optional text-based export later.",
+      "status": "done",
+      "details": "Updated reading-view export note to warn that html2canvas exports are image-based and text may not be selectable.",
       "tags": [
         "export",
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T10:15:02Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T037",
