@@ -437,14 +437,19 @@
       "id": "T031",
       "title": "Add PDF and reading-view navigation controls",
       "priority": 2,
-      "status": "todo",
-      "details": "Add prev/next buttons and a page jump control for PDFs and virtual pages to meet viewer requirements.",
+      "status": "done",
+      "details": "Added page navigation controls with prev/next buttons and page jump for PDF and reading views.",
       "tags": [
         "ux",
         "viewer"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T09:33:05Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T032",

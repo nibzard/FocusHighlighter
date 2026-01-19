@@ -93,6 +93,29 @@ app.innerHTML = `
           </div>
           <span id="page-indicator" class="pill">Page 1 / -</span>
         </div>
+        <div class="page-controls" aria-label="Page navigation">
+          <button id="page-prev" class="secondary-button nav-button" type="button" disabled>
+            Prev
+          </button>
+          <div class="page-jump">
+            <label class="page-label" for="page-jump-input">Page</label>
+            <input
+              id="page-jump-input"
+              class="page-input"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+            />
+            <span id="page-total" class="page-total">/ -</span>
+            <button id="page-jump" class="secondary-button" type="button" disabled>
+              Go
+            </button>
+          </div>
+          <button id="page-next" class="secondary-button nav-button" type="button" disabled>
+            Next
+          </button>
+        </div>
         <div class="highlight-controls" aria-label="Highlight controls">
           <div class="control-group">
             <p class="control-label">Highlight mode</p>
@@ -264,6 +287,11 @@ const docxDropzone = document.querySelector<HTMLLabelElement>('#docx-dropzone');
 const fileName = document.querySelector<HTMLParagraphElement>('#file-name');
 const fileStatus = document.querySelector<HTMLParagraphElement>('#file-status');
 const pageIndicator = document.querySelector<HTMLSpanElement>('#page-indicator');
+const pagePrevButton = document.querySelector<HTMLButtonElement>('#page-prev');
+const pageNextButton = document.querySelector<HTMLButtonElement>('#page-next');
+const pageJumpButton = document.querySelector<HTMLButtonElement>('#page-jump');
+const pageJumpInput = document.querySelector<HTMLInputElement>('#page-jump-input');
+const pageTotalLabel = document.querySelector<HTMLSpanElement>('#page-total');
 const viewerStage = document.querySelector<HTMLDivElement>('#viewer-stage');
 const viewerPlaceholder = document.querySelector<HTMLDivElement>('#viewer-placeholder');
 const pdfStack = document.querySelector<HTMLDivElement>('#pdf-stack');
@@ -1311,6 +1339,7 @@ const setPageIndicator = (current: number, total: number | null) => {
     return;
   }
   pageIndicator.textContent = `Page ${current} / ${total ?? '-'}`;
+  updatePageNavigationControls();
 };
 
 const setPageIndicatorLabel = (label: string) => {
@@ -1318,6 +1347,34 @@ const setPageIndicatorLabel = (label: string) => {
     return;
   }
   pageIndicator.textContent = label;
+  updatePageNavigationControls();
+};
+
+const updatePageNavigationControls = () => {
+  const current = getCurrentPageNumber();
+  const total = getTotalPages();
+  const hasPages = Boolean(current && total);
+
+  if (pagePrevButton) {
+    pagePrevButton.disabled = !hasPages || !current || current <= 1;
+  }
+  if (pageNextButton) {
+    pageNextButton.disabled = !hasPages || !current || !total || current >= total;
+  }
+  if (pageJumpButton) {
+    pageJumpButton.disabled = !hasPages;
+  }
+  if (pageJumpInput) {
+    pageJumpInput.disabled = !hasPages;
+    pageJumpInput.min = '1';
+    pageJumpInput.max = total ? String(total) : '';
+    if (!pageJumpInput.matches(':focus')) {
+      pageJumpInput.value = hasPages && current ? String(current) : '';
+    }
+  }
+  if (pageTotalLabel) {
+    pageTotalLabel.textContent = total ? `/ ${total}` : '/ -';
+  }
 };
 
 const formatProgressCount = (completed: number, total: number) => `${completed} / ${total} pages`;
@@ -1369,6 +1426,7 @@ const setViewerMode = (mode: DocumentSourceKind) => {
   viewerStage.classList.toggle('is-docx', mode === 'docx' || mode === 'url' || mode === 'text');
   updateViewerModeVisibility();
   setExportNote(mode);
+  updatePageNavigationControls();
 };
 
 const resetProgress = () => {
@@ -2347,7 +2405,9 @@ const scrollToDocxPage = (pageNumber: number) => {
   }
   currentDocxPageNumber = target.pageNumber;
   setPageIndicator(currentDocxPageNumber, totalPages);
-  docxViewer.scrollTo({ top: target.element.offsetTop });
+  if (currentViewMode !== 'list') {
+    docxViewer.scrollTo({ top: target.element.offsetTop });
+  }
   if (currentViewMode === 'list') {
     renderHighlightListView();
   }
@@ -3263,6 +3323,44 @@ const getTotalPages = () => {
   return null;
 };
 
+const clampPageNumber = (pageNumber: number, total: number) => Math.min(total, Math.max(1, pageNumber));
+
+const requestPageNavigation = (pageNumber: number) => {
+  const total = getTotalPages();
+  if (!total) {
+    return;
+  }
+  const clamped = clampPageNumber(pageNumber, total);
+  if (currentSourceKind === 'pdf') {
+    void goToPdfPage(clamped);
+    return;
+  }
+  if (currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') {
+    scrollToDocxPage(clamped);
+  }
+};
+
+const handlePageJump = () => {
+  if (!pageJumpInput) {
+    return;
+  }
+  const total = getTotalPages();
+  if (!total) {
+    return;
+  }
+  const rawValue = Number.parseInt(pageJumpInput.value, 10);
+  if (Number.isNaN(rawValue)) {
+    const fallback = getCurrentPageNumber();
+    if (fallback) {
+      pageJumpInput.value = String(fallback);
+    }
+    return;
+  }
+  const clamped = clampPageNumber(rawValue, total);
+  pageJumpInput.value = String(clamped);
+  requestPageNavigation(clamped);
+};
+
 const getHighlightListState = (pageNumber: number | null) => {
   if (!pageNumber) {
     return { highlights: [] as SentenceSegment[], questionIds: new Set<string>(), ready: false };
@@ -3786,6 +3884,10 @@ const setViewMode = (mode: ViewerMode) => {
   updateViewerModeVisibility();
   if (currentViewMode === 'list') {
     renderHighlightListView();
+    return;
+  }
+  if ((currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') && docxPages.length) {
+    scrollToDocxPage(currentDocxPageNumber);
   }
 };
 
@@ -4431,6 +4533,34 @@ const handleViewerKeydown = (event: KeyboardEvent) => {
   }
 };
 
+pagePrevButton?.addEventListener('click', () => {
+  const current = getCurrentPageNumber();
+  if (!current) {
+    return;
+  }
+  requestPageNavigation(current - 1);
+});
+
+pageNextButton?.addEventListener('click', () => {
+  const current = getCurrentPageNumber();
+  if (!current) {
+    return;
+  }
+  requestPageNavigation(current + 1);
+});
+
+pageJumpButton?.addEventListener('click', () => {
+  handlePageJump();
+});
+
+pageJumpInput?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  event.preventDefault();
+  handlePageJump();
+});
+
 pdfInput?.addEventListener('change', (event) => {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
@@ -4655,4 +4785,5 @@ updateHighlightIntensityControls();
 updateViewModeControls();
 updateViewerModeVisibility();
 updateContrastState();
+updatePageNavigationControls();
 renderStudyStrip();
