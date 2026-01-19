@@ -657,7 +657,7 @@
       "id": "T043",
       "title": "Destroy previous PDF.js documents on reset",
       "priority": 3,
-      "status": "todo",
+      "status": "done",
       "details": "Call pdfDoc.destroy() before clearing state so repeated uploads do not leak PDF.js resources.",
       "tags": [
         "performance",
@@ -666,7 +666,8 @@
       "files": [
         "src/main.ts",
         "to-do.json"
-      ]
+      ],
+      "updated_at": "2026-01-19T11:56:51Z"
     },
     {
       "id": "T044",

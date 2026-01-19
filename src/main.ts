@@ -1587,6 +1587,12 @@ const resetProgress = () => {
 };
 
 const resetViewer = () => {
+  if (pdfDoc) {
+    const docToDestroy = pdfDoc;
+    void docToDestroy.destroy().catch((error) => {
+      console.debug('Failed to destroy previous PDF document', error);
+    });
+  }
   pdfDoc = null;
   currentPage = null;
   currentPageTextMap = null;
