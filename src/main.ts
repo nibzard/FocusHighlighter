@@ -152,6 +152,23 @@ app.innerHTML = `
               />
               <button id="question-apply" class="secondary-button" type="button">Highlight</button>
             </div>
+            <div class="question-chips" role="group" aria-label="Question presets">
+              <button class="chip-button" type="button" data-question-preset="What is the main idea?">
+                What is the main idea?
+              </button>
+              <button class="chip-button" type="button" data-question-preset="Which definitions are essential?">
+                Which definitions are essential?
+              </button>
+              <button class="chip-button" type="button" data-question-preset="What causes what, and why?">
+                What causes what, and why?
+              </button>
+              <button class="chip-button" type="button" data-question-preset="What steps or process should I learn?">
+                What steps or process should I learn?
+              </button>
+              <button class="chip-button" type="button" data-question-preset="Which facts or formulas should I memorize?">
+                Which facts or formulas should I memorize?
+              </button>
+            </div>
             <p id="question-note" class="muted control-note">Ask a question to layer answers on top of auto highlights.</p>
           </div>
           <div class="control-group">
@@ -365,6 +382,9 @@ const questionGroup = document.querySelector<HTMLDivElement>('#question-group');
 const questionInput = document.querySelector<HTMLInputElement>('#question-input');
 const questionButton = document.querySelector<HTMLButtonElement>('#question-apply');
 const questionNote = document.querySelector<HTMLParagraphElement>('#question-note');
+const questionPresetButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-question-preset]'),
+);
 const highlightIntensityButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-highlight-intensity]'),
 );
@@ -5114,6 +5134,21 @@ questionInput?.addEventListener('keydown', (event) => {
   }
   event.preventDefault();
   void applyQuestionHighlight();
+});
+
+questionPresetButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (!questionInput) {
+      return;
+    }
+    const preset = button.dataset.questionPreset;
+    if (!preset) {
+      return;
+    }
+    questionInput.value = preset;
+    questionInput.focus();
+    void applyQuestionHighlight();
+  });
 });
 
 bindDropzone(pdfDropzone, (file) => {

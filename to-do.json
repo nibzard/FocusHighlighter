@@ -579,14 +579,19 @@
       "id": "T039",
       "title": "Add question preset chips",
       "priority": 4,
-      "status": "todo",
-      "details": "Provide a small set of preset question chips to seed common student prompts.",
+      "status": "done",
+      "details": "Added preset question chips that fill the query and trigger highlighting.",
       "tags": [
         "ux",
         "question"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T10:54:01Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T040",
