@@ -349,15 +349,19 @@
       "id": "T026",
       "title": "Reset sentence cap on reading-view re-pagination",
       "priority": 2,
-      "status": "todo",
-      "details": "When DOCX/URL/Text is re-paginated (e.g., resize), reset auto sentence counters so highlights re-index correctly.",
+      "status": "done",
+      "details": "Reset auto sentence caps when re-paginating reading views so highlights re-index after resize.",
       "tags": [
         "bugfix",
         "docx",
         "pagination"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T08:51:34Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T027",

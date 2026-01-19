@@ -2317,6 +2317,9 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
     return;
   }
 
+  autoSentenceCount = 0;
+  autoSentenceCapReached = false;
+
   const sourceLabel = getReadingLabel(sourceKind);
   indexedPages.clear();
   pinnedHighlightIds.clear();
