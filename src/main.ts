@@ -4071,6 +4071,68 @@ const canvasToPngBlob = (canvas: HTMLCanvasElement) =>
     }, 'image/png');
   });
 
+type ExportCoverage = {
+  totalPages: number;
+  indexedPages: number;
+  cappedPages: number;
+  isSentenceCapped: boolean;
+};
+
+const getExportCoverage = (sourceKind: DocumentSourceKind): ExportCoverage | null => {
+  const totalPages = getTotalPages();
+  if (!sourceKind || !totalPages) {
+    return null;
+  }
+
+  let indexedCount = 0;
+  for (const entry of indexedPages.values()) {
+    if (entry.source === sourceKind) {
+      indexedCount += 1;
+    }
+  }
+
+  const { cappedTotalPages } = getAutoPageLimit(totalPages);
+  return {
+    totalPages,
+    indexedPages: Math.min(totalPages, indexedCount),
+    cappedPages: cappedTotalPages,
+    isSentenceCapped: autoSentenceCapReached,
+  };
+};
+
+const buildPartialExportMessage = (coverage: ExportCoverage) => {
+  const messages: string[] = [];
+  if (coverage.indexedPages < coverage.totalPages) {
+    messages.push(
+      `Only ${coverage.indexedPages} of ${coverage.totalPages} pages are indexed right now.`,
+    );
+  }
+  if (coverage.cappedPages < coverage.totalPages && coverage.indexedPages < coverage.totalPages) {
+    messages.push(`Auto-highlighting is capped at ${coverage.cappedPages} pages for performance.`);
+  }
+  if (coverage.isSentenceCapped) {
+    messages.push(`Auto-highlighting stopped after ${performanceLimits.maxSentences} sentences.`);
+  }
+  messages.push('Export will include highlights for indexed pages only. Export anyway?');
+  return messages.join(' ');
+};
+
+const confirmPartialExport = (sourceKind: DocumentSourceKind) => {
+  const coverage = getExportCoverage(sourceKind);
+  if (!coverage) {
+    return true;
+  }
+  if (coverage.indexedPages >= coverage.totalPages && !coverage.isSentenceCapped) {
+    return true;
+  }
+  const message = buildPartialExportMessage(coverage);
+  if (window.confirm(message)) {
+    return true;
+  }
+  setStatus('Export canceled. Wait for indexing to finish for full-document highlights.');
+  return false;
+};
+
 const exportReadingViewPdf = async () => {
   const sourceKind = currentSourceKind;
   if (sourceKind !== 'docx' && sourceKind !== 'url' && sourceKind !== 'text') {
@@ -4085,6 +4147,10 @@ const exportReadingViewPdf = async () => {
 
   if (indexedPages.size === 0) {
     setStatus('Highlights are not ready yet.');
+    return;
+  }
+
+  if (!confirmPartialExport(sourceKind)) {
     return;
   }
 
@@ -4153,6 +4219,10 @@ const exportHighlightedPdf = async () => {
 
   if (indexedPages.size === 0) {
     setStatus('Highlights are not ready yet.');
+    return;
+  }
+
+  if (!confirmPartialExport('pdf')) {
     return;
   }
 
