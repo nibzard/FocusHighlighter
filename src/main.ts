@@ -280,27 +280,40 @@ app.innerHTML = `
         </div>
       </article>
     </section>
-    <section class="strip-card" aria-live="polite">
+    <section id="study-strip" class="strip-card" aria-live="polite">
       <div class="strip-header">
         <div>
           <h2>Study Strip</h2>
           <p class="muted">Verbatim highlights grouped by page. Pin the lines you want to keep.</p>
         </div>
-        <span id="study-strip-count" class="pill">0 pinned</span>
-      </div>
-      <div class="strip-actions">
-        <div class="strip-action-row">
-          <button id="study-strip-copy" class="strip-action" type="button" disabled>Copy highlights</button>
-          <button id="study-strip-download" class="strip-action" type="button" disabled>
-            Download highlights.md
+        <div class="strip-header-actions">
+          <span id="study-strip-count" class="pill">0 pinned</span>
+          <button
+            id="study-strip-toggle"
+            class="strip-toggle"
+            type="button"
+            aria-expanded="true"
+            aria-controls="study-strip-body"
+          >
+            Hide Study Strip
           </button>
         </div>
-        <p id="study-strip-export-note" class="muted strip-export-note">
-          Exports pinned lines when available, otherwise all highlights.
-        </p>
       </div>
-      <div id="study-strip-list" class="strip-list" role="list"></div>
-      <p id="study-strip-empty" class="muted strip-empty">Upload a PDF, DOCX, URL, or text to populate the study strip.</p>
+      <div id="study-strip-body" class="strip-body">
+        <div class="strip-actions">
+          <div class="strip-action-row">
+            <button id="study-strip-copy" class="strip-action" type="button" disabled>Copy highlights</button>
+            <button id="study-strip-download" class="strip-action" type="button" disabled>
+              Download highlights.md
+            </button>
+          </div>
+          <p id="study-strip-export-note" class="muted strip-export-note">
+            Exports pinned lines when available, otherwise all highlights.
+          </p>
+        </div>
+        <div id="study-strip-list" class="strip-list" role="list"></div>
+        <p id="study-strip-empty" class="muted strip-empty">Upload a PDF, DOCX, URL, or text to populate the study strip.</p>
+      </div>
     </section>
   </main>
 `;
@@ -335,12 +348,15 @@ const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
 const progressToggleButton = document.querySelector<HTMLButtonElement>('#progress-toggle');
 const downloadButton = document.querySelector<HTMLButtonElement>('#download-highlighted');
 const exportNote = document.querySelector<HTMLParagraphElement>('#export-note');
+const studyStripSection = document.querySelector<HTMLElement>('#study-strip');
 const studyStripList = document.querySelector<HTMLDivElement>('#study-strip-list');
 const studyStripEmpty = document.querySelector<HTMLParagraphElement>('#study-strip-empty');
 const studyStripCount = document.querySelector<HTMLSpanElement>('#study-strip-count');
 const studyStripCopyButton = document.querySelector<HTMLButtonElement>('#study-strip-copy');
 const studyStripDownloadButton = document.querySelector<HTMLButtonElement>('#study-strip-download');
 const studyStripExportNote = document.querySelector<HTMLParagraphElement>('#study-strip-export-note');
+const studyStripToggleButton = document.querySelector<HTMLButtonElement>('#study-strip-toggle');
+const studyStripBody = document.querySelector<HTMLDivElement>('#study-strip-body');
 const highlightModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-highlight-mode]'),
 );
@@ -480,6 +496,8 @@ type StudyStripExportPayload = {
   mode: StudyStripExportMode;
   sections: StudyStripSection[];
 };
+
+let isStudyStripVisible = true;
 
 type ParagraphRange = {
   start: number;
@@ -3407,6 +3425,22 @@ const setStudyStripExportState = (pinnedCount: number, totalCount: number) => {
     pinnedCount > 0 ? 'Exports pinned lines only.' : 'Exports all highlighted lines.';
 };
 
+const setStudyStripVisibility = (isVisible: boolean) => {
+  if (!studyStripBody || !studyStripToggleButton || !studyStripSection) {
+    return;
+  }
+  isStudyStripVisible = isVisible;
+  studyStripBody.hidden = !isVisible;
+  studyStripSection.classList.toggle('is-collapsed', !isVisible);
+  studyStripToggleButton.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+  studyStripToggleButton.textContent = isVisible ? 'Hide Study Strip' : 'Show Study Strip';
+};
+
+const initializeStudyStripVisibility = () => {
+  const prefersCompact = window.matchMedia('(max-width: 640px)');
+  setStudyStripVisibility(!prefersCompact.matches);
+};
+
 const getCurrentPageNumber = () => {
   if (currentSourceKind === 'pdf') {
     return currentPage?.pageNumber ?? null;
@@ -4987,6 +5021,10 @@ studyStripDownloadButton?.addEventListener('click', () => {
   setStatus(`${label} downloaded as highlights.md.`);
 });
 
+studyStripToggleButton?.addEventListener('click', () => {
+  setStudyStripVisibility(!isStudyStripVisible);
+});
+
 studyStripList?.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const button = target.closest<HTMLButtonElement>('button[data-sentence-id]');
@@ -5127,4 +5165,5 @@ updateViewModeControls();
 updateViewerModeVisibility();
 updateContrastState();
 updatePageNavigationControls();
+initializeStudyStripVisibility();
 renderStudyStrip();

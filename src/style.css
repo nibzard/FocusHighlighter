@@ -916,6 +916,45 @@ select:focus-visible,
   font-size: 1.3rem;
 }
 
+.strip-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.strip-toggle {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: rgba(255, 248, 236, 0.9);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.strip-toggle:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.strip-toggle[aria-expanded="false"] {
+  background: rgba(224, 122, 46, 0.12);
+}
+
+.strip-card.is-collapsed {
+  gap: 12px;
+}
+
+.strip-body {
+  display: grid;
+  gap: 18px;
+}
+
 .strip-actions {
   display: grid;
   gap: 8px;
@@ -1107,6 +1146,17 @@ select:focus-visible,
   .strip-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .strip-header-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .strip-toggle {
+    width: 100%;
+    text-align: center;
   }
 
   .strip-action-row {

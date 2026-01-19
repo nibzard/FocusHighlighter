@@ -481,7 +481,7 @@
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T10:04:34Z",
+      "updated_at": "2026-01-19T10:06:53Z",
       "files": [
         "src/main.ts",
         "src/style.css",
@@ -499,7 +499,7 @@
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T09:51:40Z",
+      "updated_at": "2026-01-19T09:52:11Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -509,14 +509,19 @@
       "id": "T035",
       "title": "Add Study Strip visibility toggle",
       "priority": 3,
-      "status": "todo",
-      "details": "Provide a show/hide control for the Study Strip, optimized for small screens.",
+      "status": "done",
+      "details": "Added a Study Strip show/hide toggle with a collapsible body and mobile-friendly layout.",
       "tags": [
         "ux",
         "study-strip"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T10:12:04Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T036",
