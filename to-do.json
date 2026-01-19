@@ -316,16 +316,243 @@
       "title": "Create multilingual smoke-test plan and sample docs for manual QA",
       "priority": 4,
       "status": "done",
-      "updated_at": "2026-01-18T23:38:55Z",
+      "updated_at": "2026-01-18T23:39:31Z",
       "details": "Created multilingual smoke test plan and sample text fixtures for English, Spanish, French, Chinese, and Arabic.",
       "files": [
         "qa/SMOKE_TEST_PLAN.md",
+        "qa/samples/sample-ar.txt",
         "qa/samples/sample-en.txt",
         "qa/samples/sample-es.txt",
         "qa/samples/sample-fr.txt",
-        "qa/samples/sample-zh.txt",
-        "qa/samples/sample-ar.txt"
+        "qa/samples/sample-zh.txt"
       ]
+    },
+    {
+      "id": "T025",
+      "title": "Fix PDF embedding race when navigating pages",
+      "priority": 1,
+      "status": "done",
+      "details": "Scoped PDF embedding updates to target pages to avoid cross-page highlight corruption during navigation.",
+      "tags": [
+        "bugfix",
+        "pdf",
+        "embeddings"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T08:46:20Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
+    },
+    {
+      "id": "T026",
+      "title": "Reset sentence cap on reading-view re-pagination",
+      "priority": 2,
+      "status": "todo",
+      "details": "When DOCX/URL/Text is re-paginated (e.g., resize), reset auto sentence counters so highlights re-index correctly.",
+      "tags": [
+        "bugfix",
+        "docx",
+        "pagination"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T027",
+      "title": "Sanitize download filenames for URL/text sources",
+      "priority": 2,
+      "status": "todo",
+      "details": "Generate safe, readable filenames for URL/Text exports by stripping path separators and unsafe characters before download.",
+      "tags": [
+        "bugfix",
+        "export"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T028",
+      "title": "Implement document-level centroid sampling for auto highlights",
+      "priority": 2,
+      "status": "todo",
+      "details": "Compute a doc centroid from sampled sentence embeddings across the document and use it for globality scoring (per spec).",
+      "tags": [
+        "highlighting",
+        "embeddings"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T029",
+      "title": "Add MMR selection for question highlights",
+      "priority": 2,
+      "status": "todo",
+      "details": "Apply maximal marginal relevance when selecting question highlights to reduce redundancy.",
+      "tags": [
+        "highlighting",
+        "question"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T030",
+      "title": "Layer question highlights on top of auto highlights",
+      "priority": 2,
+      "status": "todo",
+      "details": "Align question mode with spec by keeping auto highlights visible and overlaying question highlights with clear UI controls.",
+      "tags": [
+        "highlighting",
+        "question",
+        "ux"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T031",
+      "title": "Add PDF and reading-view navigation controls",
+      "priority": 2,
+      "status": "todo",
+      "details": "Add prev/next buttons and a page jump control for PDFs and virtual pages to meet viewer requirements.",
+      "tags": [
+        "ux",
+        "viewer"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T032",
+      "title": "Add interactive highlight tooltip with pin/unpin",
+      "priority": 2,
+      "status": "todo",
+      "details": "Enable clicking highlights (PDF overlays and docx spans) to show a tooltip with verbatim text and a pin toggle.",
+      "tags": [
+        "ux",
+        "highlighting",
+        "study-strip"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T033",
+      "title": "Add cancel or pause control for background indexing",
+      "priority": 3,
+      "status": "todo",
+      "details": "Provide a UI control to cancel/pause background indexing and update progress state accordingly.",
+      "tags": [
+        "performance",
+        "ux"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T034",
+      "title": "Ensure exports cover full document highlights",
+      "priority": 2,
+      "status": "todo",
+      "details": "Block export until indexing completes or add explicit confirmation when exporting partial highlights; default to full-document export.",
+      "tags": [
+        "export",
+        "ux"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T035",
+      "title": "Add Study Strip visibility toggle",
+      "priority": 3,
+      "status": "todo",
+      "details": "Provide a show/hide control for the Study Strip, optimized for small screens.",
+      "tags": [
+        "ux",
+        "study-strip"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T036",
+      "title": "Clarify reading-view export limitations",
+      "priority": 3,
+      "status": "todo",
+      "details": "Add UI copy noting that html2canvas exports may be image-based and text may not be selectable; consider optional text-based export later.",
+      "tags": [
+        "export",
+        "ux"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T037",
+      "title": "Encode highlight intensity by score with non-color cues",
+      "priority": 3,
+      "status": "todo",
+      "details": "Vary opacity or style by score and add a non-color cue (e.g., outline or underline) for accessibility.",
+      "tags": [
+        "a11y",
+        "highlighting"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T038",
+      "title": "Persist pinned highlights across mode or intensity changes",
+      "priority": 3,
+      "status": "todo",
+      "details": "Keep pinned lines stable when switching modes/intensity, or clearly scope pins per mode in the UI.",
+      "tags": [
+        "study-strip",
+        "ux"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T039",
+      "title": "Add question preset chips",
+      "priority": 4,
+      "status": "todo",
+      "details": "Provide a small set of preset question chips to seed common student prompts.",
+      "tags": [
+        "ux",
+        "question"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T040",
+      "title": "Add unit tests for segmentation, scoring, and sanitization",
+      "priority": 4,
+      "status": "todo",
+      "details": "Introduce a test runner and cover sentence segmentation, scoring/MMR selection, HTML sanitization, and filename handling.",
+      "tags": [
+        "tests"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
+    },
+    {
+      "id": "T041",
+      "title": "Expand QA coverage and run smoke checks",
+      "priority": 4,
+      "status": "todo",
+      "details": "Update smoke test plan with export gating, accessibility checks, and performance expectations; run through multilingual samples.",
+      "tags": [
+        "qa"
+      ],
+      "created_at": "2026-01-19T06:09:55Z",
+      "updated_at": "2026-01-19T06:09:55Z"
     }
   ]
 }

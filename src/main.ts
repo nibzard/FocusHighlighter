@@ -1125,14 +1125,21 @@ const cosineSimilarity = (a: ArrayLike<number>, b: ArrayLike<number>) => {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 };
 
-const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: string) => {
+const runPageEmbeddings = async (
+  pageNumber: number,
+  sentences: SentenceSegment[],
+  statusPrefix: string,
+) => {
   if (!sentences.length) {
     return;
   }
 
   const requestId = ++embeddingRequestId;
   const preferredDevice = getEmbeddingDevice();
-  setStatus(`${statusPrefix} Loading embeddings (${formatEmbeddingDeviceLabel(preferredDevice)})...`);
+  const isCurrentPage = currentPage?.pageNumber === pageNumber;
+  if (isCurrentPage) {
+    setStatus(`${statusPrefix} Loading embeddings (${formatEmbeddingDeviceLabel(preferredDevice)})...`);
+  }
 
   try {
     const pooledEmbeddings = await computeEmbeddingsForSentences(sentences, { allowWorker: false });
@@ -1140,48 +1147,65 @@ const runPageEmbeddings = async (sentences: SentenceSegment[], statusPrefix: str
       return;
     }
     if (!pooledEmbeddings) {
-      setStatus(`${statusPrefix} Embeddings loaded but could not be parsed.`);
+      if (isCurrentPage) {
+        setStatus(`${statusPrefix} Embeddings loaded but could not be parsed.`);
+      }
       return;
     }
 
-    currentPageEmbeddings = pooledEmbeddings;
-    const autoHighlights = updateAutoHighlights(currentPageSentences, currentPageEmbeddings);
+    const autoHighlights = selectAutoHighlights(sentences, pooledEmbeddings);
     const questionHighlights =
       currentQuestionEmbedding && currentQuestionQuery
-        ? selectQuestionHighlights(currentPageSentences, currentPageEmbeddings, currentQuestionEmbedding)
+        ? selectQuestionHighlights(sentences, pooledEmbeddings, currentQuestionEmbedding)
         : [];
-    if (currentHighlightMode === 'question') {
-      currentPageHighlightSentences = questionHighlights;
+    const existing = indexedPages.get(pageNumber);
+    if (existing && existing.source === 'pdf') {
+      indexedPages.set(pageNumber, {
+        ...existing,
+        highlights: autoHighlights,
+        questionHighlights,
+        embeddings: pooledEmbeddings,
+      });
+    } else if (isCurrentPage && currentPageTextMap) {
+      indexedPages.set(pageNumber, {
+        source: 'pdf',
+        pageNumber,
+        textMap: currentPageTextMap,
+        sentences,
+        highlights: autoHighlights,
+        questionHighlights,
+        embeddings: pooledEmbeddings,
+      });
     }
-    const highlightStats = renderHighlights();
+
+    if (isCurrentPage) {
+      currentPageEmbeddings = pooledEmbeddings;
+      currentPageHighlightSentences =
+        currentHighlightMode === 'question' ? questionHighlights : autoHighlights;
+      const highlightStats = renderHighlights();
+      if (currentViewMode === 'list') {
+        renderHighlightListView();
+      }
+      const activeDevice = embeddingBackend ?? preferredDevice;
+      setStatus(
+        `${statusPrefix} Auto-highlighted ${highlightStats.sentences} sentences with embeddings (${formatEmbeddingDeviceLabel(activeDevice)}).`,
+      );
+    }
     if (pooledEmbeddings.length > 1) {
       console.debug(
         'Embedding sample similarity',
         cosineSimilarity(pooledEmbeddings[0], pooledEmbeddings[1]).toFixed(4),
       );
     }
-    if (currentPage) {
-      const existing = indexedPages.get(currentPage.pageNumber);
-      if (existing) {
-        indexedPages.set(currentPage.pageNumber, {
-          ...existing,
-          highlights: autoHighlights,
-          questionHighlights,
-          embeddings: currentPageEmbeddings,
-        });
-      }
-    }
     renderStudyStrip();
-    const activeDevice = embeddingBackend ?? preferredDevice;
-    setStatus(
-      `${statusPrefix} Auto-highlighted ${highlightStats.sentences} sentences with embeddings (${formatEmbeddingDeviceLabel(activeDevice)}).`,
-    );
   } catch (error) {
     if (requestId !== embeddingRequestId) {
       return;
     }
     console.error(error);
-    setStatus(`${statusPrefix} Embeddings failed to load.`);
+    if (isCurrentPage) {
+      setStatus(`${statusPrefix} Embeddings failed to load.`);
+    }
   }
 };
 
@@ -4135,7 +4159,7 @@ const loadPdf = async (file: File) => {
         ? 'Page 1 ready. Indexing remaining pages...'
         : 'Single-page PDF ready.';
     setProgress(backgroundProcessedPages, backgroundTotalPages, appendNote(progressMessage, pageCapNote));
-    const embeddingsTask = runPageEmbeddings(currentPageSentences, statusPrefix);
+    const embeddingsTask = runPageEmbeddings(currentPage.pageNumber, currentPageSentences, statusPrefix);
     if (autoSentenceCapReached) {
       notifySentenceCap();
       return;
