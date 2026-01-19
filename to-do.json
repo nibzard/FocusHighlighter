@@ -474,14 +474,19 @@
       "id": "T033",
       "title": "Add cancel or pause control for background indexing",
       "priority": 3,
-      "status": "todo",
-      "details": "Provide a UI control to cancel/pause background indexing and update progress state accordingly.",
+      "status": "done",
+      "details": "Added pause/resume control for background indexing with progress panel updates.",
       "tags": [
         "performance",
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T10:04:34Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T034",

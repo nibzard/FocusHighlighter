@@ -259,6 +259,17 @@ app.innerHTML = `
             <div id="progress-fill" class="progress-fill"></div>
           </div>
           <p id="progress-status" class="muted progress-status">Waiting for document upload.</p>
+          <div class="progress-actions">
+            <button
+              id="progress-toggle"
+              class="secondary-button progress-toggle"
+              type="button"
+              aria-pressed="false"
+              disabled
+            >
+              Pause indexing
+            </button>
+          </div>
           <p id="scan-warning" class="warning-note" hidden></p>
         </div>
         <div class="export-panel">
@@ -321,6 +332,7 @@ const progressStatus = document.querySelector<HTMLParagraphElement>('#progress-s
 const scanWarning = document.querySelector<HTMLParagraphElement>('#scan-warning');
 const progressCount = document.querySelector<HTMLSpanElement>('#progress-count');
 const progressFill = document.querySelector<HTMLDivElement>('#progress-fill');
+const progressToggleButton = document.querySelector<HTMLButtonElement>('#progress-toggle');
 const downloadButton = document.querySelector<HTMLButtonElement>('#download-highlighted');
 const exportNote = document.querySelector<HTMLParagraphElement>('#export-note');
 const studyStripList = document.querySelector<HTMLDivElement>('#study-strip-list');
@@ -614,6 +626,9 @@ const indexedPages = new Map<number, IndexedPage>();
 let backgroundProcessId = 0;
 let backgroundProcessedPages = 0;
 let backgroundTotalPages = 0;
+let backgroundIndexingPaused = false;
+let backgroundPausePromise: Promise<void> | null = null;
+let backgroundPauseResolve: (() => void) | null = null;
 let pdfNavigationId = 0;
 let autoSentenceCount = 0;
 let autoSentenceCapReached = false;
@@ -1410,6 +1425,63 @@ const getProgressPercent = (completed: number, total: number) => {
   return Math.min(100, Math.max(0, (completed / total) * 100));
 };
 
+const canControlBackgroundIndexing = () =>
+  backgroundTotalPages > 1 && backgroundProcessedPages < backgroundTotalPages && !autoSentenceCapReached;
+
+const updateProgressToggle = () => {
+  if (!progressToggleButton) {
+    return;
+  }
+  progressToggleButton.disabled = !canControlBackgroundIndexing();
+  progressToggleButton.textContent = backgroundIndexingPaused ? 'Resume indexing' : 'Pause indexing';
+  progressToggleButton.setAttribute('aria-pressed', backgroundIndexingPaused ? 'true' : 'false');
+};
+
+const ensureBackgroundPausePromise = () => {
+  if (!backgroundPausePromise) {
+    backgroundPausePromise = new Promise<void>((resolve) => {
+      backgroundPauseResolve = resolve;
+    });
+  }
+  return backgroundPausePromise;
+};
+
+const clearBackgroundPause = () => {
+  backgroundIndexingPaused = false;
+  if (backgroundPauseResolve) {
+    backgroundPauseResolve();
+  }
+  backgroundPauseResolve = null;
+  backgroundPausePromise = null;
+};
+
+const pauseBackgroundIndexing = () => {
+  if (!canControlBackgroundIndexing() || backgroundIndexingPaused) {
+    return;
+  }
+  backgroundIndexingPaused = true;
+  ensureBackgroundPausePromise();
+  setProgress(backgroundProcessedPages, backgroundTotalPages, 'Indexing paused. Resume to continue.');
+};
+
+const resumeBackgroundIndexing = () => {
+  if (!backgroundIndexingPaused) {
+    return;
+  }
+  clearBackgroundPause();
+  setProgress(backgroundProcessedPages, backgroundTotalPages, 'Resuming indexing...');
+};
+
+const waitForBackgroundResume = async (processId: number) => {
+  if (!backgroundIndexingPaused) {
+    return processId === backgroundProcessId;
+  }
+  const pausePromise = ensureBackgroundPausePromise();
+  setProgress(backgroundProcessedPages, backgroundTotalPages, 'Indexing paused. Resume to continue.');
+  await pausePromise;
+  return processId === backgroundProcessId;
+};
+
 const setProgress = (completed: number, total: number, message: string) => {
   if (progressCount) {
     progressCount.textContent = formatProgressCount(completed, total);
@@ -1420,6 +1492,7 @@ const setProgress = (completed: number, total: number, message: string) => {
   if (progressStatus) {
     progressStatus.textContent = message;
   }
+  updateProgressToggle();
 };
 
 const updateViewerModeVisibility = () => {
@@ -1456,6 +1529,7 @@ const setViewerMode = (mode: DocumentSourceKind) => {
 const resetProgress = () => {
   backgroundProcessedPages = 0;
   backgroundTotalPages = 0;
+  clearBackgroundPause();
   setProgress(0, 0, 'Waiting for document upload.');
 };
 
@@ -2358,6 +2432,10 @@ const startDocxIndexing = async (
     }
     if (autoSentenceCapReached) {
       notifySentenceCap();
+      return;
+    }
+    const canContinue = await waitForBackgroundResume(processId);
+    if (!canContinue) {
       return;
     }
 
@@ -4390,6 +4468,10 @@ const startBackgroundIndexing = async (
       notifySentenceCap();
       return;
     }
+    const canContinue = await waitForBackgroundResume(processId);
+    if (!canContinue) {
+      return;
+    }
 
     setProgress(
       backgroundProcessedPages,
@@ -4844,6 +4926,14 @@ viewerModeButtons.forEach((button) => {
   });
 });
 
+progressToggleButton?.addEventListener('click', () => {
+  if (backgroundIndexingPaused) {
+    resumeBackgroundIndexing();
+    return;
+  }
+  pauseBackgroundIndexing();
+});
+
 downloadButton?.addEventListener('click', () => {
   void exportHighlightedPdf();
 });
@@ -5021,6 +5111,7 @@ window.addEventListener('resize', () => {
     }
     if ((currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') && docxHtml) {
       backgroundProcessId += 1;
+      clearBackgroundPause();
       void renderDocxDocument(docxHtml, currentSourceKind);
     }
   }, 150);

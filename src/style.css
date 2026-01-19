@@ -833,6 +833,21 @@ select:focus-visible,
   font-size: 0.9rem;
 }
 
+.progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.progress-toggle {
+  padding: 8px 12px;
+  font-size: 0.82rem;
+}
+
+.progress-toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
 .warning-note {
   margin: 0;
   padding: 8px 10px;
