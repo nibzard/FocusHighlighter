@@ -367,14 +367,18 @@
       "id": "T027",
       "title": "Sanitize download filenames for URL/text sources",
       "priority": 2,
-      "status": "todo",
-      "details": "Generate safe, readable filenames for URL/Text exports by stripping path separators and unsafe characters before download.",
+      "status": "done",
+      "details": "Sanitized URL/text export filenames by stripping path separators and unsafe characters before download.",
       "tags": [
         "bugfix",
         "export"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T08:56:01Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T028",

@@ -3683,14 +3683,30 @@ const collectHighlightRects = (
   return rects;
 };
 
-const getDownloadFileName = (name: string | null) => {
+const sanitizeDownloadBaseName = (raw: string) => {
+  const withoutSeparators = raw.replace(/[\\/]+/g, '-');
+  const withoutUnsafe = withoutSeparators.replace(/[<>:"|?*\u0000-\u001F]/g, '');
+  const collapsedWhitespace = withoutUnsafe.replace(/\s+/g, ' ').trim();
+  return collapsedWhitespace.replace(/[. ]+$/g, '');
+};
+
+const getDownloadFileName = (name: string | null, sourceKind: DocumentSourceKind) => {
   if (!name) {
     return 'highlighted.pdf';
   }
-  const trimmed = name.trim();
+  let trimmed = name.trim();
   if (!trimmed) {
     return 'highlighted.pdf';
   }
+
+  if (sourceKind === 'url' || sourceKind === 'text') {
+    const sanitized = sanitizeDownloadBaseName(trimmed);
+    if (!sanitized) {
+      return 'highlighted.pdf';
+    }
+    trimmed = sanitized;
+  }
+
   if (trimmed.toLowerCase().endsWith('.pdf')) {
     return `highlighted-${trimmed}`;
   }
@@ -3763,7 +3779,7 @@ const exportReadingViewPdf = async () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = getDownloadFileName(currentFileName);
+    link.download = getDownloadFileName(currentFileName, sourceKind);
     document.body.append(link);
     link.click();
     link.remove();
@@ -3843,7 +3859,7 @@ const exportHighlightedPdf = async () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = getDownloadFileName(currentFileName);
+    link.download = getDownloadFileName(currentFileName, currentSourceKind);
     document.body.append(link);
     link.click();
     link.remove();
