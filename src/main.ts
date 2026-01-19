@@ -497,6 +497,10 @@ const performanceLimits = {
     wasm: { min: 4, max: 16 },
   },
   workerSentenceThreshold: 12,
+  docCentroidSamples: {
+    perPage: 6,
+    max: 120,
+  },
 };
 
 let currentPageTextMap: PageTextMap | null = null;
@@ -548,6 +552,9 @@ const embeddingWorkerRequests = new Map<
 >();
 let embeddingRequestId = 0;
 let currentPageEmbeddings: Float32Array[] | null = null;
+let docEmbeddingSamples: Float32Array[] = [];
+let docEmbeddingCentroid: Float32Array | null = null;
+const docSampledPages = new Set<number>();
 let currentPageHighlightSentences: SentenceSegment[] = [];
 let docxHtml: string | null = null;
 let docxPages: DocxPage[] = [];
@@ -627,6 +634,12 @@ const clampSentencesForAutoIndexing = (sentences: SentenceSegment[]) => {
 
 const registerAutoSentenceCount = (count: number) => {
   autoSentenceCount = Math.min(performanceLimits.maxSentences, autoSentenceCount + count);
+};
+
+const resetDocCentroidSamples = () => {
+  docEmbeddingSamples = [];
+  docEmbeddingCentroid = null;
+  docSampledPages.clear();
 };
 
 const getEmbeddingBatchSize = (device: EmbeddingDevice, total: number) => {
@@ -1153,6 +1166,7 @@ const runPageEmbeddings = async (
       return;
     }
 
+    updateDocEmbeddingCentroid(pageNumber, pooledEmbeddings);
     const autoHighlights = selectAutoHighlights(sentences, pooledEmbeddings);
     const questionHighlights =
       currentQuestionEmbedding && currentQuestionQuery
@@ -1384,6 +1398,7 @@ const resetViewer = () => {
   backgroundProcessId += 1;
   autoSentenceCount = 0;
   autoSentenceCapReached = false;
+  resetDocCentroidSamples();
   pdfHasExtractedText = false;
   indexedPages.clear();
   resetProgress();
@@ -2205,6 +2220,9 @@ const indexDocxPage = async (
     return null;
   }
 
+  if (embeddings) {
+    updateDocEmbeddingCentroid(page.pageNumber, embeddings);
+  }
   const highlights = selectAutoHighlights(effectiveSentences, embeddings);
   const questionHighlights =
     currentQuestionEmbedding && currentQuestionQuery
@@ -2319,6 +2337,7 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
 
   autoSentenceCount = 0;
   autoSentenceCapReached = false;
+  resetDocCentroidSamples();
 
   const sourceLabel = getReadingLabel(sourceKind);
   indexedPages.clear();
@@ -2690,6 +2709,55 @@ const computeCentroid = (embeddings: Float32Array[]) => {
   return l2NormalizeInPlace(centroid);
 };
 
+const sampleEmbeddingsEvenly = (embeddings: Float32Array[], targetCount: number) => {
+  if (!embeddings.length || targetCount <= 0) {
+    return [];
+  }
+  if (embeddings.length <= targetCount) {
+    return embeddings.slice();
+  }
+  const step = embeddings.length / targetCount;
+  const samples: Float32Array[] = [];
+  for (let index = 0; index < targetCount; index += 1) {
+    const sampleIndex = Math.min(embeddings.length - 1, Math.floor(index * step));
+    samples.push(embeddings[sampleIndex]);
+  }
+  return samples;
+};
+
+const downsampleEmbeddingsEvenly = (embeddings: Float32Array[], targetCount: number) => {
+  if (embeddings.length <= targetCount) {
+    return embeddings;
+  }
+  const step = embeddings.length / targetCount;
+  const samples: Float32Array[] = [];
+  for (let index = 0; index < targetCount; index += 1) {
+    const sampleIndex = Math.min(embeddings.length - 1, Math.floor(index * step));
+    samples.push(embeddings[sampleIndex]);
+  }
+  return samples;
+};
+
+const updateDocEmbeddingCentroid = (pageNumber: number, embeddings: Float32Array[]) => {
+  if (!embeddings.length || docSampledPages.has(pageNumber)) {
+    return;
+  }
+  docSampledPages.add(pageNumber);
+  const target = Math.min(performanceLimits.docCentroidSamples.perPage, embeddings.length);
+  const samples = sampleEmbeddingsEvenly(embeddings, target);
+  if (!samples.length) {
+    return;
+  }
+  docEmbeddingSamples = docEmbeddingSamples.concat(samples);
+  if (docEmbeddingSamples.length > performanceLimits.docCentroidSamples.max) {
+    docEmbeddingSamples = downsampleEmbeddingsEvenly(
+      docEmbeddingSamples,
+      performanceLimits.docCentroidSamples.max,
+    );
+  }
+  docEmbeddingCentroid = computeCentroid(docEmbeddingSamples);
+};
+
 const getPositionPrior = (sentenceIndex: number, sentenceCount: number) => {
   if (sentenceCount <= 1) {
     return 0.6;
@@ -2745,12 +2813,12 @@ const buildSentenceScores = (
   embeddings: Float32Array[],
 ) => {
   const pageCentroid = computeCentroid(embeddings);
-  const docCentroid = pageCentroid;
+  const globalCentroid = docEmbeddingCentroid ?? pageCentroid;
 
   return sentences.map((sentence, index) => {
     const embedding = embeddings[index];
     const centrality = pageCentroid ? cosineSimilarity(embedding, pageCentroid) : 0;
-    const globality = docCentroid ? cosineSimilarity(embedding, docCentroid) : 0;
+    const globality = globalCentroid ? cosineSimilarity(embedding, globalCentroid) : 0;
     const position = getPositionPrior(index, sentences.length);
     const length = getLengthPrior(sentence.text);
     const score = 0.65 * centrality + 0.25 * globality + 0.07 * position + 0.03 * length;
@@ -3908,6 +3976,9 @@ const indexPdfPage = async (
     }
   }
 
+  if (embeddings) {
+    updateDocEmbeddingCentroid(pageNumber, embeddings);
+  }
   const highlights = selectAutoHighlights(effectiveSentences, embeddings);
   const questionHighlights =
     currentQuestionEmbedding && currentQuestionQuery

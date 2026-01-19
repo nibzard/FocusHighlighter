@@ -339,7 +339,7 @@
         "embeddings"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T08:46:20Z",
+      "updated_at": "2026-01-19T08:49:45Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -357,7 +357,7 @@
         "pagination"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T08:51:34Z",
+      "updated_at": "2026-01-19T08:53:27Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -374,7 +374,7 @@
         "export"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T08:56:01Z",
+      "updated_at": "2026-01-19T08:57:43Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -384,14 +384,18 @@
       "id": "T028",
       "title": "Implement document-level centroid sampling for auto highlights",
       "priority": 2,
-      "status": "todo",
-      "details": "Compute a doc centroid from sampled sentence embeddings across the document and use it for globality scoring (per spec).",
+      "status": "done",
+      "details": "Computed document centroid from sampled sentence embeddings and used it for globality scoring.",
       "tags": [
         "highlighting",
         "embeddings"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T09:05:34Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T029",
