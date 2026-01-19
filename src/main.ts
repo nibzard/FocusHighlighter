@@ -2620,10 +2620,36 @@ const loadText = async (input: string) => {
 const isPdfTextItem = (item: PdfTextItem | PdfTextMarkedContent): item is PdfTextItem =>
   typeof (item as PdfTextItem).str === 'string';
 
+const cjkScriptRegex = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+const getFirstChar = (value: string) => {
+  if (!value) {
+    return '';
+  }
+  const codePoint = value.codePointAt(0);
+  return codePoint === undefined ? '' : String.fromCodePoint(codePoint);
+};
+
+const getLastChar = (value: string) => {
+  if (!value) {
+    return '';
+  }
+  let lastChar = '';
+  for (const char of value) {
+    lastChar = char;
+  }
+  return lastChar;
+};
+
+const isCjkScriptChar = (char: string) => cjkScriptRegex.test(char);
+
 const needsSyntheticSpace = (current: string, next: string) => {
-  const lastChar = current.at(-1);
-  const nextChar = next[0];
+  const lastChar = getLastChar(current);
+  const nextChar = getFirstChar(next);
   if (!lastChar || !nextChar) {
+    return false;
+  }
+  if (isCjkScriptChar(lastChar) && isCjkScriptChar(nextChar)) {
     return false;
   }
   return !/\s/.test(lastChar) && !/\s/.test(nextChar);

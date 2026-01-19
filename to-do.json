@@ -672,7 +672,7 @@
       "id": "T044",
       "title": "Skip synthetic spaces between CJK characters during PDF text extraction",
       "priority": 2,
-      "status": "todo",
+      "status": "done",
       "details": "Refine needsSyntheticSpace to avoid inserting spaces between Han/Kana/Hangul runs so extracted text and Study Strip remain verbatim for CJK PDFs.",
       "tags": [
         "bugfix",
@@ -682,7 +682,8 @@
       "files": [
         "src/main.ts",
         "to-do.json"
-      ]
+      ],
+      "updated_at": "2026-01-19T11:53:22Z"
     }
   ]
 }
