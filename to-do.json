@@ -426,7 +426,7 @@
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T09:25:28Z",
+      "updated_at": "2026-01-19T09:26:05Z",
       "files": [
         "src/main.ts",
         "src/style.css",
@@ -444,7 +444,7 @@
         "viewer"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T09:33:05Z",
+      "updated_at": "2026-01-19T09:35:09Z",
       "files": [
         "src/main.ts",
         "src/style.css",
@@ -455,15 +455,20 @@
       "id": "T032",
       "title": "Add interactive highlight tooltip with pin/unpin",
       "priority": 2,
-      "status": "todo",
-      "details": "Enable clicking highlights (PDF overlays and docx spans) to show a tooltip with verbatim text and a pin toggle.",
+      "status": "done",
+      "details": "Added highlight tooltips for PDF and reading-view highlights with pin/unpin toggles.",
       "tags": [
         "ux",
         "highlighting",
         "study-strip"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T09:44:26Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T033",

@@ -666,6 +666,7 @@ select:focus-visible,
   box-shadow: inset 0 0 0 1px var(--highlight-outline);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+  cursor: pointer;
 }
 
 .docx-highlight.is-question {
@@ -690,6 +691,74 @@ select:focus-visible,
   border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--highlight-outline);
   mix-blend-mode: multiply;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.highlight-tooltip {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.highlight-tooltip-card {
+  position: absolute;
+  max-width: min(320px, calc(100% - 24px));
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 32px -22px rgba(30, 22, 12, 0.5);
+  padding: 12px 14px;
+  text-align: left;
+  pointer-events: auto;
+}
+
+.highlight-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.highlight-tooltip-title {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.tooltip-close {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.tooltip-close:hover {
+  color: var(--accent-strong);
+  background: rgba(224, 122, 46, 0.12);
+}
+
+.highlight-tooltip-text {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.highlight-tooltip-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.highlight-tooltip .strip-pin {
+  font-size: 0.75rem;
+  padding: 4px 10px;
 }
 
 .highlight-rect.is-question {

@@ -231,6 +231,24 @@ app.innerHTML = `
             aria-live="polite"
             hidden
           ></div>
+          <div
+            id="highlight-tooltip"
+            class="highlight-tooltip"
+            role="dialog"
+            aria-label="Highlight details"
+            hidden
+          >
+            <div id="highlight-tooltip-card" class="highlight-tooltip-card" role="document">
+              <div class="highlight-tooltip-header">
+                <span class="highlight-tooltip-title">Highlight</span>
+                <button id="highlight-tooltip-close" class="tooltip-close" type="button">Close</button>
+              </div>
+              <p id="highlight-tooltip-text" class="highlight-tooltip-text"></p>
+              <div class="highlight-tooltip-actions">
+                <button id="highlight-tooltip-pin" class="strip-pin" type="button">Pin</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="progress-panel" aria-live="polite">
           <div class="progress-meta">
@@ -328,6 +346,11 @@ const viewerModeButtons = Array.from(
 );
 const contrastNote = document.querySelector<HTMLParagraphElement>('#contrast-note');
 const highlightListView = document.querySelector<HTMLDivElement>('#highlight-list-view');
+const highlightTooltip = document.querySelector<HTMLDivElement>('#highlight-tooltip');
+const highlightTooltipCard = document.querySelector<HTMLDivElement>('#highlight-tooltip-card');
+const highlightTooltipText = document.querySelector<HTMLParagraphElement>('#highlight-tooltip-text');
+const highlightTooltipPinButton = document.querySelector<HTMLButtonElement>('#highlight-tooltip-pin');
+const highlightTooltipCloseButton = document.querySelector<HTMLButtonElement>('#highlight-tooltip-close');
 
 let pdfDoc: PDFDocumentProxy | null = null;
 let currentPage: PDFPageProxy | null = null;
@@ -595,6 +618,7 @@ let pdfNavigationId = 0;
 let autoSentenceCount = 0;
 let autoSentenceCapReached = false;
 let pdfHasExtractedText = false;
+let activeTooltipSentenceId: string | null = null;
 
 const getSentenceSegmenter = (): SentenceSegmenter | null => {
   if (typeof Intl === 'undefined') {
@@ -1481,6 +1505,7 @@ const resetViewer = () => {
   if (highlightLayer) {
     highlightLayer.innerHTML = '';
   }
+  hideHighlightTooltip();
   setPageIndicator(1, null);
   pinnedHighlightIds.clear();
   renderStudyStrip();
@@ -3108,6 +3133,7 @@ const getItemPdfRect = (
 };
 
 const renderHighlights = () => {
+  hideHighlightTooltip();
   if (!highlightLayer || !currentViewport || !currentPageTextMap) {
     if (highlightLayer) {
       highlightLayer.innerHTML = '';
@@ -3581,6 +3607,7 @@ const renderDocxHighlightsForMode = () => {
   if (!docxPages.length) {
     return;
   }
+  hideHighlightTooltip();
   const shouldUpdateDocx =
     currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text';
   if (!shouldUpdateDocx) {
@@ -3883,12 +3910,89 @@ const setViewMode = (mode: ViewerMode) => {
   updateViewModeControls();
   updateViewerModeVisibility();
   if (currentViewMode === 'list') {
+    hideHighlightTooltip();
     renderHighlightListView();
     return;
   }
   if ((currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text') && docxPages.length) {
     scrollToDocxPage(currentDocxPageNumber);
   }
+};
+
+const findSentenceById = (sentenceId: string) => {
+  for (const entry of indexedPages.values()) {
+    const match = entry.sentences.find((sentence) => sentence.id === sentenceId);
+    if (match) {
+      return match;
+    }
+  }
+  const fallback = currentPageSentences.find((sentence) => sentence.id === sentenceId);
+  return fallback ?? null;
+};
+
+const updateHighlightTooltipPinState = (sentenceId: string) => {
+  if (!highlightTooltipPinButton) {
+    return;
+  }
+  const isPinned = pinnedHighlightIds.has(sentenceId);
+  highlightTooltipPinButton.textContent = isPinned ? 'Unpin' : 'Pin';
+  highlightTooltipPinButton.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+  highlightTooltipPinButton.setAttribute('aria-label', `${isPinned ? 'Unpin' : 'Pin'} highlight`);
+};
+
+function hideHighlightTooltip() {
+  if (!highlightTooltip || !highlightTooltipCard) {
+    return;
+  }
+  highlightTooltip.hidden = true;
+  highlightTooltipCard.style.left = '';
+  highlightTooltipCard.style.top = '';
+  activeTooltipSentenceId = null;
+}
+
+const positionHighlightTooltip = (anchorRect: DOMRect) => {
+  if (!viewerStage || !highlightTooltipCard) {
+    return;
+  }
+  const stageRect = viewerStage.getBoundingClientRect();
+  const tooltipRect = highlightTooltipCard.getBoundingClientRect();
+  const padding = 12;
+  const anchorCenterX = anchorRect.left + anchorRect.width / 2;
+  let left = anchorCenterX - stageRect.left - tooltipRect.width / 2;
+  left = Math.min(stageRect.width - tooltipRect.width - padding, Math.max(padding, left));
+  let top = anchorRect.top - stageRect.top - tooltipRect.height - 12;
+  if (top < padding) {
+    top = anchorRect.bottom - stageRect.top + 12;
+  }
+  if (top + tooltipRect.height > stageRect.height - padding) {
+    top = Math.max(padding, stageRect.height - tooltipRect.height - padding);
+  }
+  highlightTooltipCard.style.left = `${left}px`;
+  highlightTooltipCard.style.top = `${top}px`;
+};
+
+const showHighlightTooltip = (sentenceId: string, anchorRect: DOMRect) => {
+  if (!highlightTooltip || !highlightTooltipCard || !highlightTooltipText) {
+    return;
+  }
+  if (activeTooltipSentenceId === sentenceId && !highlightTooltip.hidden) {
+    hideHighlightTooltip();
+    return;
+  }
+  const sentence = findSentenceById(sentenceId);
+  if (!sentence) {
+    return;
+  }
+  highlightTooltipText.textContent = sentence.text;
+  highlightTooltip.hidden = false;
+  highlightTooltipCard.style.left = '0px';
+  highlightTooltipCard.style.top = '0px';
+  activeTooltipSentenceId = sentenceId;
+  if (highlightTooltipPinButton) {
+    highlightTooltipPinButton.dataset.sentenceId = sentenceId;
+    updateHighlightTooltipPinState(sentenceId);
+  }
+  positionHighlightTooltip(anchorRect);
 };
 
 const togglePinnedHighlight = (sentenceId: string) => {
@@ -3898,6 +4002,9 @@ const togglePinnedHighlight = (sentenceId: string) => {
     pinnedHighlightIds.add(sentenceId);
   }
   renderStudyStrip();
+  if (activeTooltipSentenceId === sentenceId) {
+    updateHighlightTooltipPinState(sentenceId);
+  }
 };
 
 const collectHighlightRects = (
@@ -4746,11 +4853,83 @@ highlightListView?.addEventListener('click', (event) => {
   togglePinnedHighlight(sentenceId);
 });
 
+highlightLayer?.addEventListener('click', (event) => {
+  if (currentViewMode === 'list') {
+    return;
+  }
+  const target = event.target as HTMLElement;
+  const rect = target.closest<HTMLDivElement>('.highlight-rect');
+  if (!rect) {
+    return;
+  }
+  const sentenceId = rect.dataset.sentenceId;
+  if (!sentenceId) {
+    return;
+  }
+  event.stopPropagation();
+  showHighlightTooltip(sentenceId, rect.getBoundingClientRect());
+});
+
+docxViewer?.addEventListener('click', (event) => {
+  if (currentViewMode === 'list') {
+    return;
+  }
+  const target = event.target as HTMLElement;
+  const highlight = target.closest<HTMLSpanElement>('.docx-highlight');
+  if (!highlight) {
+    return;
+  }
+  const sentenceId = highlight.dataset.sentenceId;
+  if (!sentenceId) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  showHighlightTooltip(sentenceId, highlight.getBoundingClientRect());
+});
+
+highlightTooltipPinButton?.addEventListener('click', (event) => {
+  const button = event.currentTarget as HTMLButtonElement | null;
+  const sentenceId = button?.dataset.sentenceId;
+  if (!sentenceId) {
+    return;
+  }
+  event.stopPropagation();
+  togglePinnedHighlight(sentenceId);
+});
+
+highlightTooltipCloseButton?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  hideHighlightTooltip();
+});
+
+document.addEventListener('click', (event) => {
+  if (!highlightTooltip || highlightTooltip.hidden) {
+    return;
+  }
+  const target = event.target as HTMLElement;
+  if (target.closest('#highlight-tooltip')) {
+    return;
+  }
+  if (target.closest('.highlight-rect') || target.closest('.docx-highlight')) {
+    return;
+  }
+  hideHighlightTooltip();
+});
+
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') {
+    return;
+  }
+  hideHighlightTooltip();
+});
+
 let docxScrollFrame = 0;
 docxViewer?.addEventListener('scroll', () => {
   if (currentSourceKind !== 'docx' && currentSourceKind !== 'url' && currentSourceKind !== 'text') {
     return;
   }
+  hideHighlightTooltip();
   if (docxScrollFrame) {
     window.cancelAnimationFrame(docxScrollFrame);
   }
@@ -4761,6 +4940,7 @@ docxViewer?.addEventListener('scroll', () => {
 });
 
 window.addEventListener('resize', () => {
+  hideHighlightTooltip();
   window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(() => {
     if (currentSourceKind === 'pdf' && currentPage) {
