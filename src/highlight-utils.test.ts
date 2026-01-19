@@ -147,6 +147,16 @@ describe('sanitization', () => {
     expect(cleaned).toContain('target="_blank"');
   });
 
+  it('preserves target and rel on sanitized URL links', () => {
+    const rendered =
+      '<p><a href="https://example.com" target="_blank" rel="noreferrer noopener">Example</a></p>';
+    const cleaned = sanitizeDocxHtml(rendered);
+
+    expect(cleaned).toContain('href="https://example.com/"');
+    expect(cleaned).toContain('target="_blank"');
+    expect(cleaned).toContain('rel="noreferrer noopener"');
+  });
+
   it('sanitizes markdown link hrefs', () => {
     const baseUrl = new URL('https://example.com/base');
     expect(sanitizeUrlHref('/path', baseUrl)).toBe('https://example.com/path');

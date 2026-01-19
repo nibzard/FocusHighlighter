@@ -711,7 +711,7 @@
       "priority": 2,
       "status": "done",
       "details": "When List view is active, docxViewer is display:none so pagination uses zero scrollHeight and collapses content onto page 1 (including on resize). Ensure pagination runs with a measurable layout (temporarily switch to preview or use an offscreen container), then restore view mode.",
-      "updated_at": "2026-01-19T12:38:52Z",
+      "updated_at": "2026-01-19T12:39:28Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -723,11 +723,45 @@
       "priority": 3,
       "status": "done",
       "details": "Pinned highlight IDs stay stable across reading-view repagination and persist during reindexing.",
-      "updated_at": "2026-01-19T12:51:17Z",
+      "updated_at": "2026-01-19T12:53:31Z",
+      "files": [
+        "src/highlight-utils.ts",
+        "src/main.ts",
+        "to-do.json"
+      ]
+    },
+    {
+      "id": "T048",
+      "title": "Preserve target/rel on sanitized URL links",
+      "priority": 2,
+      "status": "done",
+      "details": "Preserved target/rel on sanitized URL links and added regression coverage.",
+      "tags": [
+        "bugfix",
+        "url",
+        "security"
+      ],
+      "files": [
+        "src/highlight-utils.ts",
+        "src/highlight-utils.test.ts",
+        "to-do.json"
+      ],
+      "updated_at": "2026-01-19T13:10:24Z"
+    },
+    {
+      "id": "T049",
+      "title": "Guard PDF page-1 embedding updates after navigation",
+      "priority": 2,
+      "status": "todo",
+      "details": "runPageEmbeddings captures the current page at start; if the user navigates before embeddings finish, it can overwrite currentPage state and highlights for the wrong page. Re-check currentPage/page nav token before applying updates and add a regression QA note or test.",
+      "tags": [
+        "bugfix",
+        "pdf",
+        "embeddings"
+      ],
       "files": [
         "src/main.ts",
-        "src/highlight-utils.ts",
-        "to-do.json"
+        "qa/SMOKE_TEST_PLAN.md"
       ]
     }
   ]

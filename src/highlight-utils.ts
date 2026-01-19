@@ -457,21 +457,24 @@ export const sanitizeDocxHtml = (html: string) => {
       continue;
     }
 
+    if (tag === 'a') {
+      const rawHref = element.getAttribute('href') ?? '';
+      const safeHref = sanitizeDocxHref(rawHref);
+      for (const attr of Array.from(element.attributes)) {
+        element.removeAttribute(attr.name);
+      }
+      if (safeHref) {
+        element.setAttribute('href', safeHref);
+        element.setAttribute('rel', 'noreferrer noopener');
+        element.setAttribute('target', '_blank');
+      }
+      continue;
+    }
+
     for (const attr of Array.from(element.attributes)) {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on')) {
         element.removeAttribute(attr.name);
-        continue;
-      }
-      if (tag === 'a' && name === 'href') {
-        const safeHref = sanitizeDocxHref(attr.value);
-        if (!safeHref) {
-          element.removeAttribute(attr.name);
-        } else {
-          element.setAttribute('href', safeHref);
-          element.setAttribute('rel', 'noreferrer noopener');
-          element.setAttribute('target', '_blank');
-        }
         continue;
       }
       if ((tag === 'td' || tag === 'th') && (name === 'colspan' || name === 'rowspan')) {
