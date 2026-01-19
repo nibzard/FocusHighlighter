@@ -3216,6 +3216,12 @@ const mergeHighlightSets = (base: SentenceSegment[], overlay: SentenceSegment[])
   return merged;
 };
 
+const getPinnedHighlightsForSentences = (sentences: SentenceSegment[]) =>
+  sentences.filter((sentence) => pinnedHighlightIds.has(sentence.id));
+
+const mergeHighlightsWithPins = (highlights: SentenceSegment[], sentences: SentenceSegment[]) =>
+  mergeHighlightSets(highlights, getPinnedHighlightsForSentences(sentences));
+
 const shouldShowQuestionHighlights = () =>
   currentHighlightMode === 'question' && Boolean(currentQuestionEmbedding && currentQuestionQuery);
 
@@ -3337,8 +3343,12 @@ const renderHighlights = () => {
   const questionEmphasis = entry
     ? getQuestionHighlightEmphasisForEntry(entry)
     : currentPageQuestionHighlightEmphasis;
-  const displayHighlights =
+  const baseHighlights =
     questionHighlights.length > 0 ? mergeHighlightSets(autoHighlights, questionHighlights) : autoHighlights;
+  const pinnedHighlights = getPinnedHighlightsForSentences(
+    entry ? entry.sentences : currentPageSentences,
+  );
+  const displayHighlights = mergeHighlightSets(baseHighlights, pinnedHighlights);
   if (!displayHighlights.length) {
     highlightLayer.innerHTML = '';
     return { sentences: 0, rects: 0 };
@@ -3408,10 +3418,9 @@ const getAutoHighlightsForEntry = (entry: IndexedPage) => {
 const getActiveHighlightsForEntry = (entry: IndexedPage) => {
   const autoHighlights = getAutoHighlightsForEntry(entry);
   const questionHighlights = getQuestionHighlightsForEntry(entry);
-  if (!questionHighlights.length) {
-    return autoHighlights;
-  }
-  return mergeHighlightSets(autoHighlights, questionHighlights);
+  const merged =
+    questionHighlights.length > 0 ? mergeHighlightSets(autoHighlights, questionHighlights) : autoHighlights;
+  return mergeHighlightsWithPins(merged, entry.sentences);
 };
 
 const sortHighlightsByPosition = (a: SentenceSegment, b: SentenceSegment) => {
@@ -3629,8 +3638,9 @@ const getHighlightListState = (pageNumber: number | null) => {
       currentPageHighlightSentences.length > 0
         ? currentPageHighlightSentences
         : currentPageSentences.slice(0, fallbackCount);
+    const mergedHighlights = mergeHighlightsWithPins(highlights, currentPageSentences);
     return {
-      highlights,
+      highlights: mergedHighlights,
       questionIds: new Set<string>(),
       ready: true,
       autoEmphasis: currentPageHighlightEmphasis,

@@ -562,14 +562,18 @@
       "id": "T038",
       "title": "Persist pinned highlights across mode or intensity changes",
       "priority": 3,
-      "status": "todo",
-      "details": "Keep pinned lines stable when switching modes/intensity, or clearly scope pins per mode in the UI.",
+      "status": "done",
+      "details": "Pinned highlights now persist across mode/intensity changes by always including pinned sentences in active highlight rendering and exports.",
       "tags": [
         "study-strip",
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T10:49:01Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T039",
