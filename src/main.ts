@@ -1,5 +1,17 @@
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy, type PDFPageProxy, type RenderTask } from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import {
+  buildSentenceScores,
+  computeCentroid,
+  cosineSimilarity,
+  getDownloadFileName,
+  getSentenceSegmenter,
+  sanitizeDocxHtml,
+  sanitizeUrlHref,
+  segmentDocxPageText,
+  segmentPageText,
+  selectHighlightsWithMmr,
+} from './highlight-utils';
 
 GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
@@ -681,19 +693,6 @@ let autoSentenceCapReached = false;
 let pdfHasExtractedText = false;
 let activeTooltipSentenceId: string | null = null;
 
-const getSentenceSegmenter = (): SentenceSegmenter | null => {
-  if (typeof Intl === 'undefined') {
-    return null;
-  }
-
-  const segmenterConstructor = (Intl as { Segmenter?: SentenceSegmenterConstructor }).Segmenter;
-  if (!segmenterConstructor) {
-    return null;
-  }
-
-  return new segmenterConstructor(undefined, { granularity: 'sentence' });
-};
-
 const sentenceSegmenter = getSentenceSegmenter();
 
 const getEmbeddingDevice = (): EmbeddingDevice =>
@@ -1225,30 +1224,6 @@ const computeEmbeddingsForSentences = async (
 
   const inputs = prepareEmbeddingInputs(sentences, options.inputPrefix ?? 'passage');
   return computeEmbeddingsForInputs(inputs, options);
-};
-
-const cosineSimilarity = (a: ArrayLike<number>, b: ArrayLike<number>) => {
-  if (a.length !== b.length) {
-    return 0;
-  }
-
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let index = 0; index < a.length; index += 1) {
-    const valueA = a[index];
-    const valueB = b[index];
-    dot += valueA * valueB;
-    normA += valueA * valueA;
-    normB += valueB * valueB;
-  }
-
-  if (normA === 0 || normB === 0) {
-    return 0;
-  }
-
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 };
 
 const runPageEmbeddings = async (
@@ -1785,94 +1760,6 @@ const isDocxFile = (file: File) => {
   return file.name.toLowerCase().endsWith('.docx');
 };
 
-const sanitizeDocxHref = (href: string) => {
-  const trimmed = href.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (trimmed.startsWith('#')) {
-    return trimmed;
-  }
-  const lowered = trimmed.toLowerCase();
-  if (lowered.startsWith('javascript:') || lowered.startsWith('data:')) {
-    return null;
-  }
-  try {
-    const url = new URL(trimmed, window.location.origin);
-    const allowed = new Set(['http:', 'https:', 'mailto:', 'tel:']);
-    if (allowed.has(url.protocol)) {
-      return url.href;
-    }
-  } catch (error) {
-    return null;
-  }
-  return null;
-};
-
-// Sanitize untrusted HTML from DOCX/URL/Text before rendering.
-const sanitizeDocxHtml = (html: string) => {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const blockedTags = new Set([
-    'script',
-    'style',
-    'link',
-    'meta',
-    'iframe',
-    'object',
-    'embed',
-    'form',
-    'input',
-    'button',
-    'textarea',
-    'select',
-    'option',
-    'svg',
-    'math',
-    'img',
-    'video',
-    'audio',
-    'canvas',
-  ]);
-
-  const elements = Array.from(doc.body.querySelectorAll('*'));
-  for (const element of elements) {
-    const tag = element.tagName.toLowerCase();
-    if (blockedTags.has(tag)) {
-      element.remove();
-      continue;
-    }
-
-    for (const attr of Array.from(element.attributes)) {
-      const name = attr.name.toLowerCase();
-      if (name.startsWith('on')) {
-        element.removeAttribute(attr.name);
-        continue;
-      }
-      if (tag === 'a' && name === 'href') {
-        const safeHref = sanitizeDocxHref(attr.value);
-        if (!safeHref) {
-          element.removeAttribute(attr.name);
-        } else {
-          element.setAttribute('href', safeHref);
-          element.setAttribute('rel', 'noreferrer noopener');
-          element.setAttribute('target', '_blank');
-        }
-        continue;
-      }
-      if ((tag === 'td' || tag === 'th') && (name === 'colspan' || name === 'rowspan')) {
-        if (!/^\d+$/.test(attr.value)) {
-          element.removeAttribute(attr.name);
-        }
-        continue;
-      }
-      element.removeAttribute(attr.name);
-    }
-  }
-
-  return doc.body.innerHTML.trim();
-};
-
 const getReadingLabel = (sourceKind: ReadingSourceKind) => {
   if (sourceKind === 'url') {
     return 'URL';
@@ -1892,30 +1779,6 @@ const escapeHtml = (value: string) =>
     .replace(/'/g, '&#39;');
 
 const escapeHtmlAttribute = (value: string) => escapeHtml(value);
-
-const sanitizeUrlHref = (href: string, baseUrl: URL | null) => {
-  const trimmed = href.trim();
-  if (!trimmed) {
-    return null;
-  }
-  if (trimmed.startsWith('#')) {
-    return trimmed;
-  }
-  const lowered = trimmed.toLowerCase();
-  if (lowered.startsWith('javascript:') || lowered.startsWith('data:')) {
-    return null;
-  }
-  try {
-    const url = baseUrl ? new URL(trimmed, baseUrl) : new URL(trimmed);
-    const allowed = new Set(['http:', 'https:', 'mailto:', 'tel:']);
-    if (allowed.has(url.protocol)) {
-      return url.href;
-    }
-  } catch (error) {
-    return null;
-  }
-  return null;
-};
 
 const renderInlineMarkdown = (input: string, baseUrl: URL | null) => {
   const codeTokens: string[] = [];
@@ -2257,53 +2120,6 @@ const buildDocxPageTextMap = (pageContent: HTMLElement): DocxPageTextMap => {
   return { fullText, blocks: mappedBlocks };
 };
 
-const segmentDocxPageText = (textMap: DocxPageTextMap, pageNumber: number): SentenceSegment[] => {
-  const sentences: SentenceSegment[] = [];
-  const paragraphRanges = getParagraphRanges(textMap.fullText);
-  let paragraphIndex = 0;
-
-  for (const range of paragraphRanges) {
-    const paragraphText = textMap.fullText.slice(range.start, range.end);
-    if (!paragraphText.trim()) {
-      continue;
-    }
-
-    const sentenceChunks = getSentenceChunks(paragraphText);
-    let sentenceIndex = 0;
-
-    for (const chunk of sentenceChunks) {
-      const rawText = chunk.text;
-      const leadingWhitespace = rawText.match(/^\s*/)?.[0].length ?? 0;
-      const trailingWhitespace = rawText.match(/\s*$/)?.[0].length ?? 0;
-      const trimmedText = rawText.slice(leadingWhitespace, rawText.length - trailingWhitespace);
-
-      if (!trimmedText) {
-        continue;
-      }
-
-      const charStart = range.start + chunk.index + leadingWhitespace;
-      const charEnd = range.start + chunk.index + rawText.length - trailingWhitespace;
-
-      sentences.push({
-        id: createSentenceId(pageNumber, paragraphIndex, sentenceIndex, charStart, charEnd),
-        page: pageNumber,
-        paragraphIndex,
-        sentenceIndex,
-        charStart,
-        charEnd,
-        text: trimmedText,
-      });
-      sentenceIndex += 1;
-    }
-
-    if (sentenceIndex > 0) {
-      paragraphIndex += 1;
-    }
-  }
-
-  return sentences;
-};
-
 const findTextNodePosition = (root: HTMLElement, offset: number) => {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let currentOffset = 0;
@@ -2434,7 +2250,7 @@ const indexDocxPage = async (
   allowWorker: boolean,
 ) => {
   const textMap = buildDocxPageTextMap(page.content);
-  const sentences = segmentDocxPageText(textMap, page.pageNumber);
+  const sentences = segmentDocxPageText(textMap, page.pageNumber, sentenceSegmenter);
   const capped = clampSentencesForAutoIndexing(sentences);
   const effectiveSentences = capped.sentences;
   if (sentences.length > 0 && effectiveSentences.length === 0) {
@@ -2792,65 +2608,6 @@ const findNextTextItem = (items: PdfTextContent['items'], startIndex: number) =>
   return null;
 };
 
-const getParagraphRanges = (fullText: string): ParagraphRange[] => {
-  const ranges: ParagraphRange[] = [];
-  const separatorRegex = /(?:\r?\n\s*){2,}/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null = null;
-
-  while ((match = separatorRegex.exec(fullText)) !== null) {
-    const end = match.index;
-    if (end > lastIndex) {
-      ranges.push({ start: lastIndex, end });
-    }
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < fullText.length) {
-    ranges.push({ start: lastIndex, end: fullText.length });
-  }
-
-  return ranges;
-};
-
-const getFallbackSentenceChunks = (paragraphText: string): SegmentedTextChunk[] => {
-  const chunks: SegmentedTextChunk[] = [];
-  const regex = /[^.!?\n]+[.!?]+|[^.!?\n]+(?=\n|$)/g;
-
-  for (const match of paragraphText.matchAll(regex)) {
-    const text = match[0];
-    if (!text) {
-      continue;
-    }
-    chunks.push({ text, index: match.index ?? 0 });
-  }
-
-  if (!chunks.length && paragraphText) {
-    chunks.push({ text: paragraphText, index: 0 });
-  }
-
-  return chunks;
-};
-
-const getSentenceChunks = (paragraphText: string): SegmentedTextChunk[] => {
-  if (!sentenceSegmenter) {
-    return getFallbackSentenceChunks(paragraphText);
-  }
-
-  return Array.from(sentenceSegmenter.segment(paragraphText), (segment) => ({
-    text: segment.segment,
-    index: segment.index,
-  }));
-};
-
-const createSentenceId = (
-  pageNumber: number,
-  paragraphIndex: number,
-  sentenceIndex: number,
-  charStart: number,
-  charEnd: number,
-) => `p${pageNumber}-p${paragraphIndex}-s${sentenceIndex}-${charStart}-${charEnd}`;
-
 const extractPageTextMap = async (page: PDFPageProxy): Promise<PageTextMap> => {
   const textContent = (await page.getTextContent()) as PdfTextContent;
   const items: PdfTextItem[] = [];
@@ -2882,53 +2639,6 @@ const extractPageTextMap = async (page: PDFPageProxy): Promise<PageTextMap> => {
   }
 
   return { fullText, items, itemRanges };
-};
-
-const segmentPageText = (pageTextMap: PageTextMap, pageNumber: number): SentenceSegment[] => {
-  const sentences: SentenceSegment[] = [];
-  const paragraphRanges = getParagraphRanges(pageTextMap.fullText);
-  let paragraphIndex = 0;
-
-  for (const range of paragraphRanges) {
-    const paragraphText = pageTextMap.fullText.slice(range.start, range.end);
-    if (!paragraphText.trim()) {
-      continue;
-    }
-
-    const sentenceChunks = getSentenceChunks(paragraphText);
-    let sentenceIndex = 0;
-
-    for (const chunk of sentenceChunks) {
-      const rawText = chunk.text;
-      const leadingWhitespace = rawText.match(/^\s*/)?.[0].length ?? 0;
-      const trailingWhitespace = rawText.match(/\s*$/)?.[0].length ?? 0;
-      const trimmedText = rawText.slice(leadingWhitespace, rawText.length - trailingWhitespace);
-
-      if (!trimmedText) {
-        continue;
-      }
-
-      const charStart = range.start + chunk.index + leadingWhitespace;
-      const charEnd = range.start + chunk.index + rawText.length - trailingWhitespace;
-
-      sentences.push({
-        id: createSentenceId(pageNumber, paragraphIndex, sentenceIndex, charStart, charEnd),
-        page: pageNumber,
-        paragraphIndex,
-        sentenceIndex,
-        charStart,
-        charEnd,
-        text: trimmedText,
-      });
-      sentenceIndex += 1;
-    }
-
-    if (sentenceIndex > 0) {
-      paragraphIndex += 1;
-    }
-  }
-
-  return sentences;
 };
 
 type ScoredSentence = {
@@ -2981,24 +2691,6 @@ const getHighlightTargetCount = (sentenceCount: number) => {
   return Math.min(sentenceCount, Math.max(minimum, target));
 };
 
-const computeCentroid = (embeddings: Float32Array[]) => {
-  if (!embeddings.length) {
-    return null;
-  }
-  const size = embeddings[0].length;
-  const centroid = new Float32Array(size);
-  for (const vector of embeddings) {
-    for (let index = 0; index < size; index += 1) {
-      centroid[index] += vector[index];
-    }
-  }
-  const scale = 1 / embeddings.length;
-  for (let index = 0; index < size; index += 1) {
-    centroid[index] *= scale;
-  }
-  return l2NormalizeInPlace(centroid);
-};
-
 const sampleEmbeddingsEvenly = (embeddings: Float32Array[], targetCount: number) => {
   if (!embeddings.length || targetCount <= 0) {
     return [];
@@ -3048,113 +2740,6 @@ const updateDocEmbeddingCentroid = (pageNumber: number, embeddings: Float32Array
   docEmbeddingCentroid = computeCentroid(docEmbeddingSamples);
 };
 
-const getPositionPrior = (sentenceIndex: number, sentenceCount: number) => {
-  if (sentenceCount <= 1) {
-    return 0.6;
-  }
-  const ratio = sentenceIndex / sentenceCount;
-  if (ratio <= 0.2) {
-    return 1;
-  }
-  if (ratio <= 0.6) {
-    return 0.6;
-  }
-  return 0.3;
-};
-
-const getLengthPrior = (text: string) => {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return 0;
-  }
-
-  const visibleMatches = trimmed.match(/\S/gu);
-  const alphaMatches = trimmed.match(/[\p{L}\p{N}]/gu);
-  const visibleCount = visibleMatches ? visibleMatches.length : 0;
-  const alphaCount = alphaMatches ? alphaMatches.length : 0;
-  const density = visibleCount ? alphaCount / visibleCount : 0;
-
-  const length = trimmed.length;
-  let lengthScore = 0;
-  if (length < 20) {
-    lengthScore = 0;
-  } else if (length < 40) {
-    lengthScore = 0.3;
-  } else if (length < 80) {
-    lengthScore = 0.6;
-  } else {
-    lengthScore = 1;
-  }
-
-  let densityScore = 0.1;
-  if (density >= 0.6) {
-    densityScore = 1;
-  } else if (density >= 0.4) {
-    densityScore = 0.7;
-  } else if (density >= 0.25) {
-    densityScore = 0.4;
-  }
-
-  return lengthScore * densityScore;
-};
-
-const buildSentenceScores = (
-  sentences: SentenceSegment[],
-  embeddings: Float32Array[],
-) => {
-  const pageCentroid = computeCentroid(embeddings);
-  const globalCentroid = docEmbeddingCentroid ?? pageCentroid;
-
-  return sentences.map((sentence, index) => {
-    const embedding = embeddings[index];
-    const centrality = pageCentroid ? cosineSimilarity(embedding, pageCentroid) : 0;
-    const globality = globalCentroid ? cosineSimilarity(embedding, globalCentroid) : 0;
-    const position = getPositionPrior(index, sentences.length);
-    const length = getLengthPrior(sentence.text);
-    const score = 0.65 * centrality + 0.25 * globality + 0.07 * position + 0.03 * length;
-    return { sentence, embedding, score };
-  });
-};
-
-const selectHighlightsWithMmr = (
-  candidates: ScoredSentence[],
-  targetCount: number,
-  lambda: number,
-) => {
-  const selected: ScoredSentence[] = [];
-  const remaining = candidates.slice();
-
-  while (selected.length < targetCount && remaining.length > 0) {
-    let bestIndex = 0;
-    let bestValue = -Infinity;
-
-    for (let index = 0; index < remaining.length; index += 1) {
-      const candidate = remaining[index];
-      let penalty = 0;
-      if (selected.length > 0) {
-        let maxSimilarity = -Infinity;
-        for (const picked of selected) {
-          const similarity = cosineSimilarity(candidate.embedding, picked.embedding);
-          if (similarity > maxSimilarity) {
-            maxSimilarity = similarity;
-          }
-        }
-        penalty = lambda * maxSimilarity;
-      }
-      const value = candidate.score - penalty;
-      if (value > bestValue) {
-        bestValue = value;
-        bestIndex = index;
-      }
-    }
-
-    selected.push(remaining[bestIndex]);
-    remaining.splice(bestIndex, 1);
-  }
-
-  return selected;
-};
-
 const selectAutoHighlightsWithEmphasis = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
@@ -3169,7 +2754,7 @@ const selectAutoHighlightsWithEmphasis = (
     return { highlights, emphasis: buildUniformEmphasisMap(highlights) };
   }
 
-  const candidates = buildSentenceScores(sentences, embeddings).sort(
+  const candidates = buildSentenceScores(sentences, embeddings, docEmbeddingCentroid).sort(
     (a, b) => b.score - a.score,
   );
   const selected = selectHighlightsWithMmr(candidates, targetCount, highlightMmrLambda);
@@ -4343,36 +3928,6 @@ const collectHighlightRects = (
   return rects;
 };
 
-const sanitizeDownloadBaseName = (raw: string) => {
-  const withoutSeparators = raw.replace(/[\\/]+/g, '-');
-  const withoutUnsafe = withoutSeparators.replace(/[<>:"|?*\u0000-\u001F]/g, '');
-  const collapsedWhitespace = withoutUnsafe.replace(/\s+/g, ' ').trim();
-  return collapsedWhitespace.replace(/[. ]+$/g, '');
-};
-
-const getDownloadFileName = (name: string | null, sourceKind: DocumentSourceKind) => {
-  if (!name) {
-    return 'highlighted.pdf';
-  }
-  let trimmed = name.trim();
-  if (!trimmed) {
-    return 'highlighted.pdf';
-  }
-
-  if (sourceKind === 'url' || sourceKind === 'text') {
-    const sanitized = sanitizeDownloadBaseName(trimmed);
-    if (!sanitized) {
-      return 'highlighted.pdf';
-    }
-    trimmed = sanitized;
-  }
-
-  if (trimmed.toLowerCase().endsWith('.pdf')) {
-    return `highlighted-${trimmed}`;
-  }
-  return `highlighted-${trimmed}.pdf`;
-};
-
 const canvasToPngBlob = (canvas: HTMLCanvasElement) =>
   new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {
@@ -4619,7 +4174,7 @@ const indexPdfPage = async (
   }
   updatePdfScanWarning(textMap);
 
-  const sentences = segmentPageText(textMap, pageNumber);
+  const sentences = segmentPageText(textMap, pageNumber, sentenceSegmenter);
   const capped = clampSentencesForAutoIndexing(sentences);
   const effectiveSentences = capped.sentences;
   if (sentences.length > 0 && effectiveSentences.length === 0) {
@@ -4838,7 +4393,7 @@ const goToPdfPage = async (pageNumber: number) => {
       return;
     }
     updatePdfScanWarning(currentPageTextMap);
-    currentPageSentences = segmentPageText(currentPageTextMap, clamped);
+    currentPageSentences = segmentPageText(currentPageTextMap, clamped, sentenceSegmenter);
     currentPageEmbeddings = null;
     const autoSelection = updateAutoHighlights(currentPageSentences, null);
     const entry: IndexedPage = {
@@ -4900,7 +4455,11 @@ const loadPdf = async (file: File) => {
     await renderPage(currentPage);
     currentPageTextMap = await extractPageTextMap(currentPage);
     updatePdfScanWarning(currentPageTextMap);
-    currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
+    currentPageSentences = segmentPageText(
+      currentPageTextMap,
+      currentPage.pageNumber,
+      sentenceSegmenter,
+    );
     const capped = clampSentencesForAutoIndexing(currentPageSentences);
     currentPageSentences = capped.sentences;
     const autoSelection = updateAutoHighlights(currentPageSentences, null);

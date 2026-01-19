@@ -551,7 +551,7 @@
         "highlighting"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T10:37:41Z",
+      "updated_at": "2026-01-19T10:38:43Z",
       "files": [
         "src/main.ts",
         "src/style.css",
@@ -569,7 +569,7 @@
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T10:49:01Z",
+      "updated_at": "2026-01-19T10:51:33Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -586,7 +586,7 @@
         "question"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T10:54:01Z",
+      "updated_at": "2026-01-19T10:56:13Z",
       "files": [
         "src/main.ts",
         "src/style.css",
@@ -597,13 +597,22 @@
       "id": "T040",
       "title": "Add unit tests for segmentation, scoring, and sanitization",
       "priority": 4,
-      "status": "todo",
-      "details": "Introduce a test runner and cover sentence segmentation, scoring/MMR selection, HTML sanitization, and filename handling.",
+      "status": "done",
+      "details": "Added Vitest coverage for segmentation, scoring/MMR, sanitization, and filename handling; extracted shared highlight utilities.",
       "tags": [
         "tests"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T11:11:01Z",
+      "files": [
+        "package.json",
+        "package-lock.json",
+        "src/highlight-utils.ts",
+        "src/highlight-utils.test.ts",
+        "src/main.ts",
+        "vitest.config.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T041",
