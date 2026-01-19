@@ -391,7 +391,7 @@
         "embeddings"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T09:05:34Z",
+      "updated_at": "2026-01-19T09:06:05Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -401,14 +401,18 @@
       "id": "T029",
       "title": "Add MMR selection for question highlights",
       "priority": 2,
-      "status": "todo",
-      "details": "Apply maximal marginal relevance when selecting question highlights to reduce redundancy.",
+      "status": "done",
+      "details": "Applied MMR selection to question highlights to reduce redundancy.",
       "tags": [
         "highlighting",
         "question"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T09:07:29Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
     },
     {
       "id": "T030",

@@ -2914,11 +2914,15 @@ const selectQuestionHighlights = (
   const scored = sentences
     .map((sentence, index) => ({
       sentence,
+      embedding: embeddings[index],
       score: cosineSimilarity(embeddings[index], queryEmbedding),
     }))
     .sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, targetCount).map((entry) => entry.sentence);
+  const selected = selectHighlightsWithMmr(scored, targetCount, highlightMmrLambda).map(
+    (entry) => entry.sentence,
+  );
+  return selected.length > 0 ? selected : scored.slice(0, targetCount).map((entry) => entry.sentence);
 };
 
 const updateAutoHighlights = (
