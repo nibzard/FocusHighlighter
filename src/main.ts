@@ -2057,6 +2057,33 @@ const parseUrlInput = (input: string) => {
 
 const docxBlockSelector = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th';
 
+const getDocxLeafBlocks = (root: HTMLElement) => {
+  const candidates = Array.from(root.querySelectorAll<HTMLElement>(docxBlockSelector));
+  if (!candidates.length) {
+    return [];
+  }
+  const leafBlocks = candidates.filter(
+    (element) => !candidates.some((other) => other !== element && element.contains(other)),
+  );
+  return leafBlocks.length > 0 ? leafBlocks : candidates;
+};
+
+const assignDocxParagraphIndices = (root: HTMLElement) => {
+  const blocks = getDocxLeafBlocks(root);
+  blocks.forEach((block, index) => {
+    block.dataset.paragraphIndex = String(index);
+  });
+};
+
+const getDocxBlockParagraphIndex = (block: HTMLElement, fallback: number) => {
+  const rawValue = block.dataset.paragraphIndex;
+  if (!rawValue) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const getDocxPageMetrics = () => {
   const fallbackHeight = 520;
   const fallbackPadding = 22;
@@ -2144,6 +2171,8 @@ const paginateDocxHtml = (html: string) => {
       return [];
     }
 
+    assignDocxParagraphIndices(scratch);
+
     const { pageHeight, pageContentHeight } = getDocxPageMetrics();
     docxViewer.style.setProperty('--docx-page-height', `${pageHeight}px`);
 
@@ -2169,26 +2198,24 @@ const paginateDocxHtml = (html: string) => {
 };
 
 const buildDocxPageTextMap = (pageContent: HTMLElement): DocxPageTextMap => {
-  const candidates = Array.from(pageContent.querySelectorAll<HTMLElement>(docxBlockSelector));
-  const leafBlocks = candidates.filter(
-    (element) => !candidates.some((other) => other !== element && element.contains(other)),
-  );
-  const blocks = leafBlocks.length > 0 ? leafBlocks : [pageContent];
+  const blocks = getDocxLeafBlocks(pageContent);
+  const sourceBlocks = blocks.length > 0 ? blocks : [pageContent];
   const mappedBlocks: DocxBlock[] = [];
   let fullText = '';
-  let paragraphIndex = 0;
+  let nextParagraphIndex = 0;
 
-  for (const block of blocks) {
+  for (const block of sourceBlocks) {
     const text = block.textContent ?? '';
     if (!text.trim()) {
       continue;
     }
+    const paragraphIndex = getDocxBlockParagraphIndex(block, nextParagraphIndex);
+    nextParagraphIndex = Math.max(nextParagraphIndex, paragraphIndex + 1);
     const charStart = fullText.length;
     fullText += text;
     const charEnd = fullText.length;
     mappedBlocks.push({ element: block, text, charStart, charEnd, paragraphIndex });
     fullText += '\n\n';
-    paragraphIndex += 1;
   }
 
   return { fullText, blocks: mappedBlocks };
@@ -2490,7 +2517,6 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
 
   const sourceLabel = getReadingLabel(sourceKind);
   indexedPages.clear();
-  pinnedHighlightIds.clear();
   renderStudyStrip();
   docxPages = paginateDocxHtml(html);
 
@@ -3524,9 +3550,18 @@ const renderStudyStrip = () => {
     fragment.append(groupEl);
   }
 
-  for (const id of Array.from(pinnedHighlightIds)) {
-    if (!activeIds.has(id)) {
-      pinnedHighlightIds.delete(id);
+  const shouldPrunePinned =
+    currentSourceKind === 'docx' || currentSourceKind === 'url' || currentSourceKind === 'text'
+      ? docxPages.length > 0 &&
+        backgroundProcessedPages >= backgroundTotalPages &&
+        backgroundTotalPages === docxPages.length
+      : true;
+
+  if (shouldPrunePinned) {
+    for (const id of Array.from(pinnedHighlightIds)) {
+      if (!activeIds.has(id)) {
+        pinnedHighlightIds.delete(id);
+      }
     }
   }
 

@@ -721,8 +721,14 @@
       "id": "T047",
       "title": "Preserve pinned highlights across reading-view repagination",
       "priority": 3,
-      "status": "todo",
-      "details": "Re-pagination clears pinnedHighlightIds and sentence IDs are page-based, so resizing or reloading docx/url/text loses pins. Use stable IDs (content hash + paragraph/sentence offsets) or remap pins after repagination."
+      "status": "done",
+      "details": "Pinned highlight IDs stay stable across reading-view repagination and persist during reindexing.",
+      "updated_at": "2026-01-19T12:51:17Z",
+      "files": [
+        "src/main.ts",
+        "src/highlight-utils.ts",
+        "to-do.json"
+      ]
     }
   ]
 }

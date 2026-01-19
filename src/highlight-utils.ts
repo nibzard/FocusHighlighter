@@ -31,8 +31,16 @@ export type PageTextMap = {
   fullText: string;
 };
 
+export type DocxBlock = {
+  text: string;
+  charStart: number;
+  charEnd: number;
+  paragraphIndex: number;
+};
+
 export type DocxPageTextMap = {
   fullText: string;
+  blocks?: DocxBlock[];
 };
 
 export type ScoredSentence = {
@@ -118,6 +126,13 @@ export const createSentenceId = (
   charEnd: number,
 ) => `p${pageNumber}-p${paragraphIndex}-s${sentenceIndex}-${charStart}-${charEnd}`;
 
+const createDocxSentenceId = (
+  paragraphIndex: number,
+  sentenceIndex: number,
+  localStart: number,
+  localEnd: number,
+) => `d${paragraphIndex}-s${sentenceIndex}-${localStart}-${localEnd}`;
+
 export const segmentPageText = (
   pageTextMap: PageTextMap,
   pageNumber: number,
@@ -173,8 +188,50 @@ export const segmentDocxPageText = (
   textMap: DocxPageTextMap,
   pageNumber: number,
   segmenter: SentenceSegmenter | null = null,
-): SentenceSegment[] =>
-  segmentPageText(textMap, pageNumber, segmenter);
+): SentenceSegment[] => {
+  if (!textMap.blocks || textMap.blocks.length === 0) {
+    return segmentPageText(textMap, pageNumber, segmenter);
+  }
+
+  const sentences: SentenceSegment[] = [];
+
+  for (const block of textMap.blocks) {
+    if (!block.text.trim()) {
+      continue;
+    }
+    const sentenceChunks = getSentenceChunks(block.text, segmenter);
+    let sentenceIndex = 0;
+
+    for (const chunk of sentenceChunks) {
+      const rawText = chunk.text;
+      const leadingWhitespace = rawText.match(/^\s*/)?.[0].length ?? 0;
+      const trailingWhitespace = rawText.match(/\s*$/)?.[0].length ?? 0;
+      const trimmedText = rawText.slice(leadingWhitespace, rawText.length - trailingWhitespace);
+
+      if (!trimmedText) {
+        continue;
+      }
+
+      const localStart = chunk.index + leadingWhitespace;
+      const localEnd = chunk.index + rawText.length - trailingWhitespace;
+      const charStart = block.charStart + localStart;
+      const charEnd = block.charStart + localEnd;
+
+      sentences.push({
+        id: createDocxSentenceId(block.paragraphIndex, sentenceIndex, localStart, localEnd),
+        page: pageNumber,
+        paragraphIndex: block.paragraphIndex,
+        sentenceIndex,
+        charStart,
+        charEnd,
+        text: trimmedText,
+      });
+      sentenceIndex += 1;
+    }
+  }
+
+  return sentences;
+};
 
 export const l2NormalizeInPlace = (vector: Float32Array) => {
   let sumSquares = 0;
