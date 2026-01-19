@@ -21,6 +21,10 @@ if (!app) {
   throw new Error('App root not found');
 }
 
+// QA mode uses deterministic embeddings to keep smoke tests fast and stable.
+const isQaMode =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('qa');
+
 app.innerHTML = `
   <main class="shell">
     <header class="hero">
@@ -1149,6 +1153,22 @@ const l2NormalizeInPlace = (vector: Float32Array) => {
   return vector;
 };
 
+const qaEmbeddingDim = 12;
+
+const buildQaEmbedding = (input: string) => {
+  let seed = 0;
+  for (let index = 0; index < input.length; index += 1) {
+    seed = (seed * 31 + input.charCodeAt(index)) % 1000003;
+  }
+  const vector = new Float32Array(qaEmbeddingDim);
+  for (let dim = 0; dim < qaEmbeddingDim; dim += 1) {
+    vector[dim] = Math.sin(seed + dim * 0.7) + Math.cos(seed * (dim + 1) * 0.13);
+  }
+  return l2NormalizeInPlace(vector);
+};
+
+const computeQaEmbeddingsForInputs = (inputs: string[]) => inputs.map((input) => buildQaEmbedding(input));
+
 const poolTokenEmbeddings = (
   batch: TokenEmbeddingBatch,
   attentionMask: number[][] | null,
@@ -1172,6 +1192,10 @@ const computeEmbeddingsForInputs = async (
 ) => {
   if (!inputs.length) {
     return null;
+  }
+  if (isQaMode) {
+    embeddingBackend = 'wasm';
+    return computeQaEmbeddingsForInputs(inputs);
   }
 
   const preferredDevice = getEmbeddingDevice();

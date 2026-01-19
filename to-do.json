@@ -603,28 +603,38 @@
         "tests"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T11:11:01Z",
+      "updated_at": "2026-01-19T11:11:58Z",
       "files": [
-        "package.json",
         "package-lock.json",
-        "src/highlight-utils.ts",
+        "package.json",
         "src/highlight-utils.test.ts",
+        "src/highlight-utils.ts",
         "src/main.ts",
-        "vitest.config.ts",
-        "to-do.json"
+        "to-do.json",
+        "vitest.config.ts"
       ]
     },
     {
       "id": "T041",
       "title": "Expand QA coverage and run smoke checks",
       "priority": 4,
-      "status": "todo",
-      "details": "Update smoke test plan with export gating, accessibility checks, and performance expectations; run through multilingual samples.",
+      "status": "done",
+      "details": "Added Playwright smoke tests for text/URL/PDF flows using QA-mode deterministic embeddings; ran npm run test:smoke.",
       "tags": [
         "qa"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T11:35:46Z",
+      "blockers": [],
+      "files": [
+        "src/main.ts",
+        "qa/SMOKE_TEST_PLAN.md",
+        "qa/smoke.spec.ts",
+        "playwright.config.ts",
+        "package.json",
+        "package-lock.json",
+        "to-do.json"
+      ]
     }
   ]
 }

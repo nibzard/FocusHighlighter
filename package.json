@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext .ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:smoke": "playwright test"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
@@ -18,6 +19,7 @@
     "pdfjs-dist": "^4.0.379"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@typescript-eslint/eslint-plugin": "^6.19.1",
     "@typescript-eslint/parser": "^6.19.1",
     "eslint": "^8.56.0",
