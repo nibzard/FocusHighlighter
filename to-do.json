@@ -685,6 +685,25 @@
         "to-do.json"
       ],
       "updated_at": "2026-01-19T11:53:22Z"
+    },
+    {
+      "id": "T045",
+      "title": "Fix reading-view export when List view is active",
+      "priority": 2,
+      "status": "done",
+      "details": "html2canvas export uses the reading-view pages; when List view hides the viewer (display: none), captures can be blank. Ensure export temporarily renders the reading view offscreen or switches to preview during capture, then restores the prior view.",
+      "tags": [
+        "bugfix",
+        "export",
+        "docx",
+        "url",
+        "text"
+      ],
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ],
+      "updated_at": "2026-01-19T12:16:41Z"
     }
   ]
 }

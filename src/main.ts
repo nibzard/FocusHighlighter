@@ -4086,6 +4086,12 @@ const exportReadingViewPdf = async () => {
   }
 
   setExportEnabled(false);
+  let restoreViewMode: ViewerMode | null = null;
+  if (currentViewMode === 'list') {
+    restoreViewMode = currentViewMode;
+    setViewMode('preview');
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
   const sourceLabel = getReadingLabel(sourceKind);
   const totalPages = docxPages.length;
   const processedPages = indexedPages.size;
@@ -4133,6 +4139,9 @@ const exportReadingViewPdf = async () => {
     console.error(error);
     setStatus('Failed to export highlighted PDF.');
   } finally {
+    if (restoreViewMode) {
+      setViewMode(restoreViewMode);
+    }
     setExportEnabled(true);
   }
 };
