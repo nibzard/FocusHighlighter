@@ -393,6 +393,8 @@ let currentSourceKind: DocumentSourceKind = null;
 type ReadingSourceKind = 'docx' | 'url' | 'text';
 type HighlightMode = 'auto' | 'question';
 type HighlightIntensity = 'less' | 'default' | 'more';
+type HighlightEmphasis = 'low' | 'medium' | 'high';
+type HighlightEmphasisMap = Record<string, HighlightEmphasis>;
 type ViewerMode = 'preview' | 'list';
 
 type IndexedPage =
@@ -402,7 +404,9 @@ type IndexedPage =
       textMap: PageTextMap;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
+      autoHighlightEmphasis?: HighlightEmphasisMap;
       questionHighlights?: SentenceSegment[];
+      questionHighlightEmphasis?: HighlightEmphasisMap;
       embeddings: Float32Array[] | null;
     }
   | {
@@ -410,7 +414,9 @@ type IndexedPage =
       pageNumber: number;
       sentences: SentenceSegment[];
       highlights: SentenceSegment[];
+      autoHighlightEmphasis?: HighlightEmphasisMap;
       questionHighlights?: SentenceSegment[];
+      questionHighlightEmphasis?: HighlightEmphasisMap;
       embeddings: Float32Array[] | null;
     };
 
@@ -637,6 +643,8 @@ let docEmbeddingSamples: Float32Array[] = [];
 let docEmbeddingCentroid: Float32Array | null = null;
 const docSampledPages = new Set<number>();
 let currentPageHighlightSentences: SentenceSegment[] = [];
+let currentPageHighlightEmphasis: HighlightEmphasisMap = {};
+let currentPageQuestionHighlightEmphasis: HighlightEmphasisMap = {};
 let docxHtml: string | null = null;
 let docxPages: DocxPage[] = [];
 let currentDocxPageNumber = 1;
@@ -1252,17 +1260,21 @@ const runPageEmbeddings = async (
     }
 
     updateDocEmbeddingCentroid(pageNumber, pooledEmbeddings);
-    const autoHighlights = selectAutoHighlights(sentences, pooledEmbeddings);
-    const questionHighlights =
+    const autoSelection = selectAutoHighlightsWithEmphasis(sentences, pooledEmbeddings);
+    const questionSelection =
       currentQuestionEmbedding && currentQuestionQuery
-        ? selectQuestionHighlights(sentences, pooledEmbeddings, currentQuestionEmbedding)
-        : [];
+        ? selectQuestionHighlightsWithEmphasis(sentences, pooledEmbeddings, currentQuestionEmbedding)
+        : { highlights: [], emphasis: {} };
+    const autoHighlights = autoSelection.highlights;
+    const questionHighlights = questionSelection.highlights;
     const existing = indexedPages.get(pageNumber);
     if (existing && existing.source === 'pdf') {
       indexedPages.set(pageNumber, {
         ...existing,
         highlights: autoHighlights,
+        autoHighlightEmphasis: autoSelection.emphasis,
         questionHighlights,
+        questionHighlightEmphasis: questionSelection.emphasis,
         embeddings: pooledEmbeddings,
       });
     } else if (isCurrentPage && currentPageTextMap) {
@@ -1272,7 +1284,9 @@ const runPageEmbeddings = async (
         textMap: currentPageTextMap,
         sentences,
         highlights: autoHighlights,
+        autoHighlightEmphasis: autoSelection.emphasis,
         questionHighlights,
+        questionHighlightEmphasis: questionSelection.emphasis,
         embeddings: pooledEmbeddings,
       });
     }
@@ -1280,6 +1294,8 @@ const runPageEmbeddings = async (
     if (isCurrentPage) {
       currentPageEmbeddings = pooledEmbeddings;
       currentPageHighlightSentences = autoHighlights;
+      currentPageHighlightEmphasis = autoSelection.emphasis;
+      currentPageQuestionHighlightEmphasis = questionSelection.emphasis;
       renderHighlights();
       if (currentViewMode === 'list') {
         renderHighlightListView();
@@ -1558,6 +1574,8 @@ const resetViewer = () => {
   currentPageSentences = [];
   currentPageEmbeddings = null;
   currentPageHighlightSentences = [];
+  currentPageHighlightEmphasis = {};
+  currentPageQuestionHighlightEmphasis = {};
   questionRequestId += 1;
   currentQuestionQuery = null;
   currentQuestionEmbedding = null;
@@ -2294,6 +2312,7 @@ const applyInlineHighlight = (
   endOffset: number,
   sentenceId: string,
   className = 'docx-highlight',
+  emphasis?: HighlightEmphasis,
 ) => {
   if (startOffset >= endOffset) {
     return false;
@@ -2315,6 +2334,9 @@ const applyInlineHighlight = (
   const highlight = document.createElement('span');
   highlight.className = className;
   highlight.dataset.sentenceId = sentenceId;
+  if (emphasis) {
+    highlight.dataset.intensity = emphasis;
+  }
   highlight.append(range.extractContents());
   range.insertNode(highlight);
   range.detach();
@@ -2346,6 +2368,8 @@ const renderDocxPageHighlights = (
   textMap: DocxPageTextMap,
   highlights: SentenceSegment[],
   questionHighlightIds: Set<string> = new Set(),
+  autoEmphasis: HighlightEmphasisMap = {},
+  questionEmphasis: HighlightEmphasisMap = {},
 ) => {
   if (!highlights.length) {
     return 0;
@@ -2367,10 +2391,10 @@ const renderDocxPageHighlights = (
     if (startOffset < 0 || endOffset <= startOffset) {
       continue;
     }
-    const className = questionHighlightIds.has(sentence.id)
-      ? 'docx-highlight is-question'
-      : 'docx-highlight';
-    if (applyInlineHighlight(block.element, startOffset, endOffset, sentence.id, className)) {
+    const isQuestion = questionHighlightIds.has(sentence.id);
+    const className = isQuestion ? 'docx-highlight is-question' : 'docx-highlight';
+    const emphasis = resolveHighlightEmphasis(sentence.id, autoEmphasis, questionEmphasis, isQuestion);
+    if (applyInlineHighlight(block.element, startOffset, endOffset, sentence.id, className, emphasis)) {
       rendered += 1;
     }
   }
@@ -2413,11 +2437,13 @@ const indexDocxPage = async (
   if (embeddings) {
     updateDocEmbeddingCentroid(page.pageNumber, embeddings);
   }
-  const highlights = selectAutoHighlights(effectiveSentences, embeddings);
-  const questionHighlights =
+  const autoSelection = selectAutoHighlightsWithEmphasis(effectiveSentences, embeddings);
+  const questionSelection =
     currentQuestionEmbedding && currentQuestionQuery
-      ? selectQuestionHighlights(effectiveSentences, embeddings, currentQuestionEmbedding)
-      : [];
+      ? selectQuestionHighlightsWithEmphasis(effectiveSentences, embeddings, currentQuestionEmbedding)
+      : { highlights: [], emphasis: {} };
+  const highlights = autoSelection.highlights;
+  const questionHighlights = questionSelection.highlights;
   const showQuestionHighlights = shouldShowQuestionHighlights();
   const displayHighlights =
     showQuestionHighlights && questionHighlights.length > 0
@@ -2427,14 +2453,23 @@ const indexDocxPage = async (
     showQuestionHighlights && questionHighlights.length > 0
       ? new Set(questionHighlights.map((sentence) => sentence.id))
       : new Set<string>();
-  renderDocxPageHighlights(page, textMap, displayHighlights, questionHighlightIds);
+  renderDocxPageHighlights(
+    page,
+    textMap,
+    displayHighlights,
+    questionHighlightIds,
+    autoSelection.emphasis,
+    questionSelection.emphasis,
+  );
   registerAutoSentenceCount(effectiveSentences.length);
   return {
     source: sourceKind,
     pageNumber: page.pageNumber,
     sentences: effectiveSentences,
     highlights,
+    autoHighlightEmphasis: autoSelection.emphasis,
     questionHighlights,
+    questionHighlightEmphasis: questionSelection.emphasis,
     embeddings,
   };
 };
@@ -2882,6 +2917,37 @@ type ScoredSentence = {
   score: number;
 };
 
+type HighlightSelection = {
+  highlights: SentenceSegment[];
+  emphasis: HighlightEmphasisMap;
+};
+
+const buildUniformEmphasisMap = (
+  highlights: SentenceSegment[],
+  level: HighlightEmphasis = 'medium',
+) => {
+  const emphasis: HighlightEmphasisMap = {};
+  for (const sentence of highlights) {
+    emphasis[sentence.id] = level;
+  }
+  return emphasis;
+};
+
+const buildEmphasisMapFromScores = (scored: ScoredSentence[]) => {
+  const emphasis: HighlightEmphasisMap = {};
+  if (!scored.length) {
+    return emphasis;
+  }
+  const sorted = scored.slice().sort((a, b) => b.score - a.score);
+  const total = sorted.length;
+  for (let index = 0; index < total; index += 1) {
+    const ratio = total === 1 ? 0 : index / (total - 1);
+    const level: HighlightEmphasis = ratio <= 0.33 ? 'high' : ratio <= 0.66 ? 'medium' : 'low';
+    emphasis[sorted[index].sentence.id] = level;
+  }
+  return emphasis;
+};
+
 const getHighlightTargetCount = (sentenceCount: number) => {
   if (sentenceCount <= 0) {
     return 0;
@@ -3069,26 +3135,29 @@ const selectHighlightsWithMmr = (
   return selected;
 };
 
-const selectAutoHighlights = (
+const selectAutoHighlightsWithEmphasis = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
-) => {
+): HighlightSelection => {
   const targetCount = getHighlightTargetCount(sentences.length);
   if (!targetCount) {
-    return [];
+    return { highlights: [], emphasis: {} };
   }
 
   if (!embeddings || embeddings.length !== sentences.length) {
-    return sentences.slice(0, targetCount);
+    const highlights = sentences.slice(0, targetCount);
+    return { highlights, emphasis: buildUniformEmphasisMap(highlights) };
   }
 
   const candidates = buildSentenceScores(sentences, embeddings).sort(
     (a, b) => b.score - a.score,
   );
-  const selected = selectHighlightsWithMmr(candidates, targetCount, highlightMmrLambda).map(
-    (entry) => entry.sentence,
-  );
-  return selected.length > 0 ? selected : sentences.slice(0, targetCount);
+  const selected = selectHighlightsWithMmr(candidates, targetCount, highlightMmrLambda);
+  const finalSelection = selected.length > 0 ? selected : candidates.slice(0, targetCount);
+  return {
+    highlights: finalSelection.map((entry) => entry.sentence),
+    emphasis: buildEmphasisMapFromScores(finalSelection),
+  };
 };
 
 const normalizeQuestionInput = (value: string) => value.trim().replace(/\s+/g, ' ');
@@ -3102,17 +3171,17 @@ const computeQueryEmbedding = async (question: string) => {
   return embeddings?.[0] ?? null;
 };
 
-const selectQuestionHighlights = (
+const selectQuestionHighlightsWithEmphasis = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
   queryEmbedding: Float32Array | null,
-) => {
+): HighlightSelection => {
   const targetCount = getHighlightTargetCount(sentences.length);
   if (!targetCount || !queryEmbedding) {
-    return [];
+    return { highlights: [], emphasis: {} };
   }
   if (!embeddings || embeddings.length !== sentences.length) {
-    return [];
+    return { highlights: [], emphasis: {} };
   }
 
   const scored = sentences
@@ -3123,10 +3192,12 @@ const selectQuestionHighlights = (
     }))
     .sort((a, b) => b.score - a.score);
 
-  const selected = selectHighlightsWithMmr(scored, targetCount, highlightMmrLambda).map(
-    (entry) => entry.sentence,
-  );
-  return selected.length > 0 ? selected : scored.slice(0, targetCount).map((entry) => entry.sentence);
+  const selected = selectHighlightsWithMmr(scored, targetCount, highlightMmrLambda);
+  const finalSelection = selected.length > 0 ? selected : scored.slice(0, targetCount);
+  return {
+    highlights: finalSelection.map((entry) => entry.sentence),
+    emphasis: buildEmphasisMapFromScores(finalSelection),
+  };
 };
 
 const mergeHighlightSets = (base: SentenceSegment[], overlay: SentenceSegment[]) => {
@@ -3159,13 +3230,31 @@ const getQuestionHighlightIdsForEntry = (entry: IndexedPage) => {
   return new Set(questionHighlights.map((sentence) => sentence.id));
 };
 
+const getAutoHighlightEmphasisForEntry = (entry: IndexedPage) => entry.autoHighlightEmphasis ?? {};
+
+const getQuestionHighlightEmphasisForEntry = (entry: IndexedPage) =>
+  entry.questionHighlightEmphasis ?? {};
+
+const resolveHighlightEmphasis = (
+  sentenceId: string,
+  autoEmphasis: HighlightEmphasisMap,
+  questionEmphasis: HighlightEmphasisMap,
+  isQuestion: boolean,
+) => {
+  if (isQuestion && questionEmphasis[sentenceId]) {
+    return questionEmphasis[sentenceId];
+  }
+  return autoEmphasis[sentenceId];
+};
+
 const updateAutoHighlights = (
   sentences: SentenceSegment[],
   embeddings: Float32Array[] | null,
 ) => {
-  const highlights = selectAutoHighlights(sentences, embeddings);
-  currentPageHighlightSentences = highlights;
-  return highlights;
+  const selection = selectAutoHighlightsWithEmphasis(sentences, embeddings);
+  currentPageHighlightSentences = selection.highlights;
+  currentPageHighlightEmphasis = selection.emphasis;
+  return selection;
 };
 
 const rangesOverlap = (startA: number, endA: number, startB: number, endB: number) =>
@@ -3244,6 +3333,10 @@ const renderHighlights = () => {
       : currentPageSentences.slice(0, fallbackCount);
   const entry = currentPage ? indexedPages.get(currentPage.pageNumber) : null;
   const questionHighlights = entry ? getQuestionHighlightsForEntry(entry) : [];
+  const autoEmphasis = entry ? getAutoHighlightEmphasisForEntry(entry) : currentPageHighlightEmphasis;
+  const questionEmphasis = entry
+    ? getQuestionHighlightEmphasisForEntry(entry)
+    : currentPageQuestionHighlightEmphasis;
   const displayHighlights =
     questionHighlights.length > 0 ? mergeHighlightSets(autoHighlights, questionHighlights) : autoHighlights;
   if (!displayHighlights.length) {
@@ -3255,7 +3348,12 @@ const renderHighlights = () => {
   let rectCount = 0;
   const sentenceIds = new Set(displayHighlights.map((sentence) => sentence.id));
 
-  const renderRectsForSentences = (sentences: SentenceSegment[], className: string) => {
+  const renderRectsForSentences = (
+    sentences: SentenceSegment[],
+    className: string,
+    emphasis: HighlightEmphasisMap,
+    fallbackEmphasis: HighlightEmphasisMap = {},
+  ) => {
     for (const sentence of sentences) {
       const overlappingItems = currentPageTextMap.itemRanges.filter((range) =>
         rangesOverlap(range.charStart, range.charEnd, sentence.charStart, sentence.charEnd),
@@ -3275,15 +3373,19 @@ const renderHighlights = () => {
         rectEl.style.width = `${rect.width}px`;
         rectEl.style.height = `${rect.height}px`;
         rectEl.dataset.sentenceId = sentence.id;
+        const intensity = emphasis[sentence.id] ?? fallbackEmphasis[sentence.id];
+        if (intensity) {
+          rectEl.dataset.intensity = intensity;
+        }
         fragment.append(rectEl);
         rectCount += 1;
       }
     }
   };
 
-  renderRectsForSentences(displayHighlights, 'highlight-rect');
+  renderRectsForSentences(displayHighlights, 'highlight-rect', autoEmphasis, questionEmphasis);
   if (questionHighlights.length > 0) {
-    renderRectsForSentences(questionHighlights, 'highlight-rect is-question');
+    renderRectsForSentences(questionHighlights, 'highlight-rect is-question', questionEmphasis);
   }
 
   highlightLayer.innerHTML = '';
@@ -3501,7 +3603,13 @@ const handlePageJump = () => {
 
 const getHighlightListState = (pageNumber: number | null) => {
   if (!pageNumber) {
-    return { highlights: [] as SentenceSegment[], questionIds: new Set<string>(), ready: false };
+    return {
+      highlights: [] as SentenceSegment[],
+      questionIds: new Set<string>(),
+      ready: false,
+      autoEmphasis: {} as HighlightEmphasisMap,
+      questionEmphasis: {} as HighlightEmphasisMap,
+    };
   }
 
   const entry = indexedPages.get(pageNumber);
@@ -3510,6 +3618,8 @@ const getHighlightListState = (pageNumber: number | null) => {
       highlights: getActiveHighlightsForEntry(entry),
       questionIds: getQuestionHighlightIdsForEntry(entry),
       ready: true,
+      autoEmphasis: getAutoHighlightEmphasisForEntry(entry),
+      questionEmphasis: getQuestionHighlightEmphasisForEntry(entry),
     };
   }
 
@@ -3519,10 +3629,22 @@ const getHighlightListState = (pageNumber: number | null) => {
       currentPageHighlightSentences.length > 0
         ? currentPageHighlightSentences
         : currentPageSentences.slice(0, fallbackCount);
-    return { highlights, questionIds: new Set<string>(), ready: true };
+    return {
+      highlights,
+      questionIds: new Set<string>(),
+      ready: true,
+      autoEmphasis: currentPageHighlightEmphasis,
+      questionEmphasis: currentPageQuestionHighlightEmphasis,
+    };
   }
 
-  return { highlights: [] as SentenceSegment[], questionIds: new Set<string>(), ready: false };
+  return {
+    highlights: [] as SentenceSegment[],
+    questionIds: new Set<string>(),
+    ready: false,
+    autoEmphasis: {} as HighlightEmphasisMap,
+    questionEmphasis: {} as HighlightEmphasisMap,
+  };
 };
 
 const renderHighlightListView = () => {
@@ -3560,7 +3682,8 @@ const renderHighlightListView = () => {
     metaEl.textContent = 'Page preview not ready yet.';
   } else {
     titleEl.textContent = `Highlights for page ${pageNumber}`;
-    const { highlights, questionIds, ready } = getHighlightListState(pageNumber);
+    const { highlights, questionIds, ready, autoEmphasis, questionEmphasis } =
+      getHighlightListState(pageNumber);
     const pageMeta = totalPages ? `Page ${pageNumber} of ${totalPages}` : `Page ${pageNumber}`;
     if (!ready) {
       metaEl.textContent = `${pageMeta} - Processing highlights.`;
@@ -3579,6 +3702,10 @@ const renderHighlightListView = () => {
         const isQuestion = questionIds.has(sentence.id);
         const itemEl = document.createElement('div');
         itemEl.className = `highlight-list-item${isPinned ? ' pinned' : ''}${isQuestion ? ' is-question' : ''}`;
+        const emphasis = resolveHighlightEmphasis(sentence.id, autoEmphasis, questionEmphasis, isQuestion);
+        if (emphasis) {
+          itemEl.dataset.intensity = emphasis;
+        }
         itemEl.setAttribute('role', 'listitem');
 
         const textEl = document.createElement('p');
@@ -3620,6 +3747,8 @@ const renderStudyStrip = () => {
     groupEl.className = 'strip-group';
     const entry = indexedPages.get(section.pageNumber);
     const questionIds = entry ? getQuestionHighlightIdsForEntry(entry) : new Set<string>();
+    const autoEmphasis = entry ? getAutoHighlightEmphasisForEntry(entry) : {};
+    const questionEmphasis = entry ? getQuestionHighlightEmphasisForEntry(entry) : {};
 
     const headerEl = document.createElement('div');
     headerEl.className = 'strip-group-header';
@@ -3648,6 +3777,10 @@ const renderStudyStrip = () => {
 
       const itemEl = document.createElement('div');
       itemEl.className = `strip-item${isPinned ? ' pinned' : ''}${isQuestion ? ' is-question' : ''}`;
+      const emphasis = resolveHighlightEmphasis(sentence.id, autoEmphasis, questionEmphasis, isQuestion);
+      if (emphasis) {
+        itemEl.dataset.intensity = emphasis;
+      }
       itemEl.setAttribute('role', 'listitem');
 
       const textEl = document.createElement('p');
@@ -3735,7 +3868,16 @@ const renderDocxHighlightsForMode = () => {
     const textMap = buildDocxPageTextMap(page.content);
     const highlights = getActiveHighlightsForEntry(entry);
     const questionHighlightIds = getQuestionHighlightIdsForEntry(entry);
-    renderDocxPageHighlights(page, textMap, highlights, questionHighlightIds);
+    const autoEmphasis = getAutoHighlightEmphasisForEntry(entry);
+    const questionEmphasis = getQuestionHighlightEmphasisForEntry(entry);
+    renderDocxPageHighlights(
+      page,
+      textMap,
+      highlights,
+      questionHighlightIds,
+      autoEmphasis,
+      questionEmphasis,
+    );
   }
 };
 
@@ -3745,11 +3887,13 @@ const applyHighlightMode = () => {
       const entry = indexedPages.get(currentPage.pageNumber);
       if (entry) {
         currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+        currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(entry);
+        currentPageQuestionHighlightEmphasis = getQuestionHighlightEmphasisForEntry(entry);
       } else {
-        currentPageHighlightSentences = selectAutoHighlights(
-          currentPageSentences,
-          currentPageEmbeddings,
-        );
+        const selection = selectAutoHighlightsWithEmphasis(currentPageSentences, currentPageEmbeddings);
+        currentPageHighlightSentences = selection.highlights;
+        currentPageHighlightEmphasis = selection.emphasis;
+        currentPageQuestionHighlightEmphasis = {};
       }
       renderHighlights();
     }
@@ -3769,7 +3913,9 @@ const clearQuestionHighlights = () => {
   currentQuestionEmbedding = null;
   for (const entry of indexedPages.values()) {
     entry.questionHighlights = [];
+    entry.questionHighlightEmphasis = {};
   }
+  currentPageQuestionHighlightEmphasis = {};
 };
 
 const updateQuestionHighlightsForPages = async (
@@ -3788,6 +3934,7 @@ const updateQuestionHighlightsForPages = async (
     const entry = entries[index];
     if (!entry.sentences.length) {
       entry.questionHighlights = [];
+      entry.questionHighlightEmphasis = {};
       continue;
     }
 
@@ -3809,9 +3956,17 @@ const updateQuestionHighlightsForPages = async (
       }
     }
 
-    entry.questionHighlights = selectQuestionHighlights(entry.sentences, embeddings ?? null, queryEmbedding);
+    const selection = selectQuestionHighlightsWithEmphasis(
+      entry.sentences,
+      embeddings ?? null,
+      queryEmbedding,
+    );
+    entry.questionHighlights = selection.highlights;
+    entry.questionHighlightEmphasis = selection.emphasis;
     if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
       currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+      currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(entry);
+      currentPageQuestionHighlightEmphasis = selection.emphasis;
     }
 
     if (index % 2 === 1) {
@@ -3960,21 +4115,28 @@ const applyHighlightIntensity = () => {
 
   for (const entry of indexedPages.values()) {
     const embeddings = entry.embeddings ?? null;
-    entry.highlights = selectAutoHighlights(entry.sentences, embeddings);
+    const autoSelection = selectAutoHighlightsWithEmphasis(entry.sentences, embeddings);
+    entry.highlights = autoSelection.highlights;
+    entry.autoHighlightEmphasis = autoSelection.emphasis;
 
     if (currentQuestionEmbedding && currentQuestionQuery) {
-      entry.questionHighlights = selectQuestionHighlights(
+      const questionSelection = selectQuestionHighlightsWithEmphasis(
         entry.sentences,
         embeddings,
         currentQuestionEmbedding,
       );
+      entry.questionHighlights = questionSelection.highlights;
+      entry.questionHighlightEmphasis = questionSelection.emphasis;
     } else {
       entry.questionHighlights = [];
+      entry.questionHighlightEmphasis = {};
     }
 
     const activeHighlights = getActiveHighlightsForEntry(entry);
     if (entry.source === 'pdf' && currentPage?.pageNumber === entry.pageNumber) {
       currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+      currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(entry);
+      currentPageQuestionHighlightEmphasis = getQuestionHighlightEmphasisForEntry(entry);
     }
 
     if (docxPagesByNumber && entry.source !== 'pdf') {
@@ -3985,7 +4147,16 @@ const applyHighlightIntensity = () => {
       clearDocxHighlights(page);
       const textMap = buildDocxPageTextMap(page.content);
       const questionHighlightIds = getQuestionHighlightIdsForEntry(entry);
-      renderDocxPageHighlights(page, textMap, activeHighlights, questionHighlightIds);
+      const autoEmphasis = getAutoHighlightEmphasisForEntry(entry);
+      const questionEmphasis = getQuestionHighlightEmphasisForEntry(entry);
+      renderDocxPageHighlights(
+        page,
+        textMap,
+        activeHighlights,
+        questionHighlightIds,
+        autoEmphasis,
+        questionEmphasis,
+      );
     }
   }
 
@@ -4440,11 +4611,13 @@ const indexPdfPage = async (
   if (embeddings) {
     updateDocEmbeddingCentroid(pageNumber, embeddings);
   }
-  const highlights = selectAutoHighlights(effectiveSentences, embeddings);
-  const questionHighlights =
+  const autoSelection = selectAutoHighlightsWithEmphasis(effectiveSentences, embeddings);
+  const questionSelection =
     currentQuestionEmbedding && currentQuestionQuery
-      ? selectQuestionHighlights(effectiveSentences, embeddings, currentQuestionEmbedding)
-      : [];
+      ? selectQuestionHighlightsWithEmphasis(effectiveSentences, embeddings, currentQuestionEmbedding)
+      : { highlights: [], emphasis: {} };
+  const highlights = autoSelection.highlights;
+  const questionHighlights = questionSelection.highlights;
   registerAutoSentenceCount(effectiveSentences.length);
   return {
     source: 'pdf',
@@ -4452,7 +4625,9 @@ const indexPdfPage = async (
     textMap,
     sentences: effectiveSentences,
     highlights,
+    autoHighlightEmphasis: autoSelection.emphasis,
     questionHighlights,
+    questionHighlightEmphasis: questionSelection.emphasis,
     embeddings,
   };
 };
@@ -4615,13 +4790,17 @@ const goToPdfPage = async (pageNumber: number) => {
       cached.embeddings &&
       (!cached.questionHighlights || cached.questionHighlights.length === 0)
     ) {
-      cached.questionHighlights = selectQuestionHighlights(
+      const selection = selectQuestionHighlightsWithEmphasis(
         cached.sentences,
         cached.embeddings,
         currentQuestionEmbedding,
       );
+      cached.questionHighlights = selection.highlights;
+      cached.questionHighlightEmphasis = selection.emphasis;
     }
     currentPageHighlightSentences = getAutoHighlightsForEntry(cached);
+    currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(cached);
+    currentPageQuestionHighlightEmphasis = getQuestionHighlightEmphasisForEntry(cached);
     updatePdfScanWarning(currentPageTextMap);
   } else {
     currentPageTextMap = await extractPageTextMap(page);
@@ -4631,18 +4810,22 @@ const goToPdfPage = async (pageNumber: number) => {
     updatePdfScanWarning(currentPageTextMap);
     currentPageSentences = segmentPageText(currentPageTextMap, clamped);
     currentPageEmbeddings = null;
-    const autoHighlights = updateAutoHighlights(currentPageSentences, null);
+    const autoSelection = updateAutoHighlights(currentPageSentences, null);
     const entry: IndexedPage = {
       source: 'pdf',
       pageNumber: clamped,
       textMap: currentPageTextMap,
       sentences: currentPageSentences,
-      highlights: autoHighlights,
+      highlights: autoSelection.highlights,
+      autoHighlightEmphasis: autoSelection.emphasis,
       questionHighlights: [],
+      questionHighlightEmphasis: {},
       embeddings: null,
     };
     indexedPages.set(clamped, entry);
     currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+    currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(entry);
+    currentPageQuestionHighlightEmphasis = {};
   }
 
   const highlightStats = renderHighlights();
@@ -4690,18 +4873,22 @@ const loadPdf = async (file: File) => {
     currentPageSentences = segmentPageText(currentPageTextMap, currentPage.pageNumber);
     const capped = clampSentencesForAutoIndexing(currentPageSentences);
     currentPageSentences = capped.sentences;
-    const autoHighlights = updateAutoHighlights(currentPageSentences, null);
+    const autoSelection = updateAutoHighlights(currentPageSentences, null);
     const entry: IndexedPage = {
       source: 'pdf',
       pageNumber: currentPage.pageNumber,
       textMap: currentPageTextMap,
       sentences: currentPageSentences,
-      highlights: autoHighlights,
+      highlights: autoSelection.highlights,
+      autoHighlightEmphasis: autoSelection.emphasis,
       questionHighlights: [],
+      questionHighlightEmphasis: {},
       embeddings: null,
     };
     indexedPages.set(currentPage.pageNumber, entry);
     currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+    currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(entry);
+    currentPageQuestionHighlightEmphasis = {};
     registerAutoSentenceCount(currentPageSentences.length);
     setExportEnabled(true);
     const highlightStats = renderHighlights();

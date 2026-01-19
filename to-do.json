@@ -534,7 +534,7 @@
         "ux"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T10:15:02Z",
+      "updated_at": "2026-01-19T10:15:21Z",
       "files": [
         "src/main.ts",
         "to-do.json"
@@ -544,14 +544,19 @@
       "id": "T037",
       "title": "Encode highlight intensity by score with non-color cues",
       "priority": 3,
-      "status": "todo",
-      "details": "Vary opacity or style by score and add a non-color cue (e.g., outline or underline) for accessibility.",
+      "status": "done",
+      "details": "Mapped highlight scores to intensity tiers with non-color cues across viewer, reading view, and list/strip.",
       "tags": [
         "a11y",
         "highlighting"
       ],
       "created_at": "2026-01-19T06:09:55Z",
-      "updated_at": "2026-01-19T06:09:55Z"
+      "updated_at": "2026-01-19T10:37:41Z",
+      "files": [
+        "src/main.ts",
+        "src/style.css",
+        "to-do.json"
+      ]
     },
     {
       "id": "T038",

@@ -586,7 +586,23 @@ select:focus-visible,
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid transparent;
+  border-left: 4px solid transparent;
   background: rgba(255, 248, 236, 0.92);
+}
+
+.highlight-list-item[data-intensity="low"] {
+  border-left-style: dotted;
+  border-left-color: var(--highlight-outline);
+}
+
+.highlight-list-item[data-intensity="medium"] {
+  border-left-style: solid;
+  border-left-color: var(--highlight-outline);
+}
+
+.highlight-list-item[data-intensity="high"] {
+  border-left-style: double;
+  border-left-color: var(--highlight-outline);
 }
 
 .highlight-list-item.is-question {
@@ -596,6 +612,12 @@ select:focus-visible,
 .highlight-list-item.pinned {
   border-color: rgba(224, 122, 46, 0.45);
   background: rgba(255, 238, 214, 0.96);
+}
+
+.highlight-list-item.pinned[data-intensity="low"],
+.highlight-list-item.pinned[data-intensity="medium"],
+.highlight-list-item.pinned[data-intensity="high"] {
+  border-left-color: var(--highlight-outline);
 }
 
 .highlight-list-text {
@@ -669,6 +691,27 @@ select:focus-visible,
   cursor: pointer;
 }
 
+.docx-highlight:not(.is-question)[data-intensity="low"] {
+  box-shadow: inset 0 0 0 1px var(--highlight-outline);
+  text-decoration: underline dotted var(--highlight-outline);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.docx-highlight:not(.is-question)[data-intensity="medium"] {
+  box-shadow: inset 0 0 0 2px var(--highlight-outline);
+  text-decoration: underline solid var(--highlight-outline);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
+}
+
+.docx-highlight:not(.is-question)[data-intensity="high"] {
+  box-shadow: inset 0 0 0 3px var(--highlight-outline);
+  text-decoration: underline double var(--highlight-outline);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 0.2em;
+}
+
 .docx-highlight.is-question {
   background: var(--highlight-inline);
   box-shadow:
@@ -677,6 +720,18 @@ select:focus-visible,
   text-decoration: underline dashed var(--question-outline);
   text-decoration-thickness: 2px;
   text-underline-offset: 0.2em;
+}
+
+.docx-highlight.is-question[data-intensity="low"] {
+  text-decoration-thickness: 1px;
+}
+
+.docx-highlight.is-question[data-intensity="medium"] {
+  text-decoration-thickness: 2px;
+}
+
+.docx-highlight.is-question[data-intensity="high"] {
+  text-decoration-thickness: 3px;
 }
 
 .highlight-layer {
@@ -693,6 +748,18 @@ select:focus-visible,
   mix-blend-mode: multiply;
   pointer-events: auto;
   cursor: pointer;
+}
+
+.highlight-rect[data-intensity="low"] {
+  box-shadow: inset 0 0 0 1px var(--highlight-outline);
+}
+
+.highlight-rect[data-intensity="medium"] {
+  box-shadow: inset 0 0 0 2px var(--highlight-outline);
+}
+
+.highlight-rect[data-intensity="high"] {
+  box-shadow: inset 0 0 0 3px var(--highlight-outline);
 }
 
 .highlight-tooltip {
@@ -767,6 +834,18 @@ select:focus-visible,
   outline: 2px dashed var(--question-outline);
   outline-offset: -2px;
   mix-blend-mode: normal;
+}
+
+.highlight-rect.is-question[data-intensity="low"] {
+  outline-width: 1px;
+}
+
+.highlight-rect.is-question[data-intensity="medium"] {
+  outline-width: 2px;
+}
+
+.highlight-rect.is-question[data-intensity="high"] {
+  outline-width: 3px;
 }
 
 .viewer-stage.is-ready .pdf-stack {
@@ -1043,7 +1122,23 @@ select:focus-visible,
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid transparent;
+  border-left: 4px solid transparent;
   background: rgba(255, 248, 236, 0.92);
+}
+
+.strip-item[data-intensity="low"] {
+  border-left-style: dotted;
+  border-left-color: var(--highlight-outline);
+}
+
+.strip-item[data-intensity="medium"] {
+  border-left-style: solid;
+  border-left-color: var(--highlight-outline);
+}
+
+.strip-item[data-intensity="high"] {
+  border-left-style: double;
+  border-left-color: var(--highlight-outline);
 }
 
 .strip-item.is-question {
@@ -1053,6 +1148,12 @@ select:focus-visible,
 .strip-item.pinned {
   border-color: rgba(224, 122, 46, 0.45);
   background: rgba(255, 238, 214, 0.96);
+}
+
+.strip-item.pinned[data-intensity="low"],
+.strip-item.pinned[data-intensity="medium"],
+.strip-item.pinned[data-intensity="high"] {
+  border-left-color: var(--highlight-outline);
 }
 
 .strip-text {
