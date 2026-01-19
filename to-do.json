@@ -651,7 +651,7 @@
         "src/main.ts",
         "to-do.json"
       ],
-      "updated_at": "2026-01-19T11:48:49Z"
+      "updated_at": "2026-01-19T11:50:32Z"
     },
     {
       "id": "T043",
@@ -667,7 +667,7 @@
         "src/main.ts",
         "to-do.json"
       ],
-      "updated_at": "2026-01-19T11:56:51Z"
+      "updated_at": "2026-01-19T12:00:33Z"
     },
     {
       "id": "T044",
@@ -684,7 +684,7 @@
         "src/main.ts",
         "to-do.json"
       ],
-      "updated_at": "2026-01-19T11:53:22Z"
+      "updated_at": "2026-01-19T11:54:59Z"
     },
     {
       "id": "T045",
@@ -703,7 +703,26 @@
         "src/main.ts",
         "to-do.json"
       ],
-      "updated_at": "2026-01-19T12:16:41Z"
+      "updated_at": "2026-01-19T12:22:39Z"
+    },
+    {
+      "id": "T046",
+      "title": "Fix reading-view pagination when List view hides the viewer",
+      "priority": 2,
+      "status": "done",
+      "details": "When List view is active, docxViewer is display:none so pagination uses zero scrollHeight and collapses content onto page 1 (including on resize). Ensure pagination runs with a measurable layout (temporarily switch to preview or use an offscreen container), then restore view mode.",
+      "updated_at": "2026-01-19T12:38:52Z",
+      "files": [
+        "src/main.ts",
+        "to-do.json"
+      ]
+    },
+    {
+      "id": "T047",
+      "title": "Preserve pinned highlights across reading-view repagination",
+      "priority": 3,
+      "status": "todo",
+      "details": "Re-pagination clears pinnedHighlightIds and sentence IDs are page-based, so resizing or reloading docx/url/text loses pins. Use stable IDs (content hash + paragraph/sentence offsets) or remap pins after repagination."
     }
   ]
 }

@@ -2071,6 +2071,38 @@ const getDocxPageMetrics = () => {
   return { pageHeight, pageContentHeight };
 };
 
+const prepareDocxPaginationLayout = () => {
+  if (!docxViewer) {
+    return () => {};
+  }
+  const style = window.getComputedStyle(docxViewer);
+  if (style.display !== 'none' && docxViewer.offsetParent !== null) {
+    return () => {};
+  }
+  const prior = {
+    display: docxViewer.style.display,
+    position: docxViewer.style.position,
+    left: docxViewer.style.left,
+    top: docxViewer.style.top,
+    visibility: docxViewer.style.visibility,
+    pointerEvents: docxViewer.style.pointerEvents,
+  };
+  docxViewer.style.display = 'block';
+  docxViewer.style.position = 'absolute';
+  docxViewer.style.left = '-10000px';
+  docxViewer.style.top = '0';
+  docxViewer.style.visibility = 'hidden';
+  docxViewer.style.pointerEvents = 'none';
+  return () => {
+    docxViewer.style.display = prior.display;
+    docxViewer.style.position = prior.position;
+    docxViewer.style.left = prior.left;
+    docxViewer.style.top = prior.top;
+    docxViewer.style.visibility = prior.visibility;
+    docxViewer.style.pointerEvents = prior.pointerEvents;
+  };
+};
+
 const createDocxPage = (pageNumber: number, container: HTMLElement, pages: DocxPage[]) => {
   const pageEl = document.createElement('section');
   pageEl.className = 'docx-page';
@@ -2092,43 +2124,48 @@ const paginateDocxHtml = (html: string) => {
     return [];
   }
 
-  docxViewer.innerHTML = '';
-  const pagesContainer = document.createElement('div');
-  pagesContainer.className = 'docx-pages';
-  docxViewer.append(pagesContainer);
+  const restoreLayout = prepareDocxPaginationLayout();
+  try {
+    docxViewer.innerHTML = '';
+    const pagesContainer = document.createElement('div');
+    pagesContainer.className = 'docx-pages';
+    docxViewer.append(pagesContainer);
 
-  const scratch = document.createElement('div');
-  scratch.innerHTML = html;
-  const nodes = Array.from(scratch.childNodes).filter((node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return Boolean(node.textContent?.trim());
+    const scratch = document.createElement('div');
+    scratch.innerHTML = html;
+    const nodes = Array.from(scratch.childNodes).filter((node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return Boolean(node.textContent?.trim());
+      }
+      return true;
+    });
+
+    if (nodes.length === 0) {
+      return [];
     }
-    return true;
-  });
 
-  if (nodes.length === 0) {
-    return [];
-  }
+    const { pageHeight, pageContentHeight } = getDocxPageMetrics();
+    docxViewer.style.setProperty('--docx-page-height', `${pageHeight}px`);
 
-  const { pageHeight, pageContentHeight } = getDocxPageMetrics();
-  docxViewer.style.setProperty('--docx-page-height', `${pageHeight}px`);
+    const pages: DocxPage[] = [];
+    let pageNumber = 1;
+    let currentPage = createDocxPage(pageNumber, pagesContainer, pages);
 
-  const pages: DocxPage[] = [];
-  let pageNumber = 1;
-  let currentPage = createDocxPage(pageNumber, pagesContainer, pages);
-
-  for (const node of nodes) {
-    currentPage.content.append(node);
-    const isOverflow = currentPage.content.scrollHeight > pageContentHeight;
-    if (isOverflow && currentPage.content.childNodes.length > 1) {
-      currentPage.content.removeChild(node);
-      pageNumber += 1;
-      currentPage = createDocxPage(pageNumber, pagesContainer, pages);
+    for (const node of nodes) {
       currentPage.content.append(node);
+      const isOverflow = currentPage.content.scrollHeight > pageContentHeight;
+      if (isOverflow && currentPage.content.childNodes.length > 1) {
+        currentPage.content.removeChild(node);
+        pageNumber += 1;
+        currentPage = createDocxPage(pageNumber, pagesContainer, pages);
+        currentPage.content.append(node);
+      }
     }
-  }
 
-  return pages;
+    return pages;
+  } finally {
+    restoreLayout();
+  }
 };
 
 const buildDocxPageTextMap = (pageContent: HTMLElement): DocxPageTextMap => {
