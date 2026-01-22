@@ -760,11 +760,21 @@
         "embeddings"
       ],
       "files": [
-        "src/main.ts",
         "qa/SMOKE_TEST_PLAN.md",
+        "src/main.ts",
         "to-do.json"
       ],
-      "updated_at": "2026-01-19T13:15:45Z"
+      "updated_at": "2026-01-19T13:16:53Z"
+    },
+    {
+      "id": "PROJECT-DONE",
+      "title": "Project done: no new tasks",
+      "priority": 5,
+      "status": "done",
+      "tags": [
+        "project-done"
+      ],
+      "details": "Final review found no new issues or tasks to add."
     }
   ]
 }

@@ -28,64 +28,34 @@ const isQaMode =
 app.innerHTML = `
   <main class="shell">
     <header class="hero">
-      <p class="eyebrow">FocusHighlighter</p>
-      <h1>Drop a PDF or Word doc. Paste a URL or text. See page 1 instantly.</h1>
-      <p class="lede">
-        Upload a PDF to render page 1 with highlights, open a DOCX for a clean reading view, fetch a URL, or paste text.
-      </p>
+      <p class="eyebrow">Upload a document to start highlighting.</p>
+      <h1>FocusHighlighter</h1>
+      <p class="lede">Preview page-one highlights instantly and pin what matters.</p>
     </header>
     <section class="stage">
       <article class="upload-card">
-        <div>
-          <h2>Document upload</h2>
-          <p class="muted">
-            PDFs render page 1 with highlights. DOCX files open a sanitized reading view. URLs fetch through r.jina.ai.
-            Paste text for a private reading view.
-          </p>
-        </div>
-        <div class="upload-options">
-          <label class="dropzone" id="pdf-dropzone" for="pdf-input" tabindex="0" role="button">
-            <input id="pdf-input" type="file" accept="application/pdf" />
-            <span class="dropzone-title">Choose a PDF</span>
-            <span class="dropzone-subtitle">or drag & drop here</span>
-          </label>
-          <label class="dropzone" id="docx-dropzone" for="docx-input" tabindex="0" role="button">
-            <input
-              id="docx-input"
-              type="file"
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            />
-            <span class="dropzone-title">Choose a Word (.docx)</span>
-            <span class="dropzone-subtitle">opens a clean reading view</span>
-          </label>
-        </div>
-        <div class="url-panel">
-          <label class="url-label" for="url-input">Paste a URL</label>
-          <div class="url-row">
-            <input
-              id="url-input"
-              class="url-input"
-              type="url"
-              placeholder="https://example.com/article"
-              inputmode="url"
-              autocomplete="url"
-            />
-            <button id="url-fetch" class="secondary-button" type="button">Fetch URL</button>
+        <div class="upload-intro">
+          <div>
+            <h2>Upload a document</h2>
+            <p class="muted">Choose a source to preview highlights.</p>
           </div>
-          <p class="muted url-note">Fetched through r.jina.ai for readability.</p>
         </div>
-        <div class="text-panel">
-          <label class="url-label" for="text-input">Paste text</label>
-          <textarea
-            id="text-input"
-            class="text-input"
-            rows="6"
-            placeholder="Paste or type your reading here"
-          ></textarea>
-          <div class="text-actions">
-            <button id="text-render" class="secondary-button" type="button">Render text</button>
-            <span class="muted text-hint">Tip: Press Ctrl or Cmd + Enter to render.</span>
-          </div>
+        <div class="upload-actions">
+          <button id="pdf-button" class="primary-button upload-button" type="button">Choose PDF</button>
+          <button id="docx-button" class="secondary-button upload-button" type="button">Choose Word</button>
+          <button id="url-button" class="secondary-button upload-button" type="button">Choose URL</button>
+          <button id="text-button" class="ghost-button upload-button" type="button">Paste Text</button>
+        </div>
+        <input id="pdf-input" class="file-input" type="file" accept="application/pdf" />
+        <input
+          id="docx-input"
+          class="file-input"
+          type="file"
+          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        />
+        <div class="upload-meta">
+          <p id="file-name" class="meta-line">No file selected.</p>
+          <p id="file-status" class="meta-line">Choose a PDF, Word doc, URL, or paste text to get started.</p>
         </div>
         <div class="privacy-panel" aria-live="polite">
           <p class="privacy-title">Privacy &amp; security</p>
@@ -96,41 +66,12 @@ app.innerHTML = `
             <li>External links open in a new tab.</li>
           </ul>
         </div>
-        <div class="upload-meta">
-          <p id="file-name" class="meta-line">No file selected.</p>
-          <p id="file-status" class="meta-line">Upload a PDF, DOCX, URL, or paste text to get started.</p>
-        </div>
       </article>
       <article class="viewer-card">
         <div class="viewer-header">
           <div>
             <h2>Page preview</h2>
-            <p class="muted">PDF.js canvas render or reading view</p>
           </div>
-          <span id="page-indicator" class="pill">Page 1 / -</span>
-        </div>
-        <div class="page-controls" aria-label="Page navigation">
-          <button id="page-prev" class="secondary-button nav-button" type="button" disabled>
-            Prev
-          </button>
-          <div class="page-jump">
-            <label class="page-label" for="page-jump-input">Page</label>
-            <input
-              id="page-jump-input"
-              class="page-input"
-              type="number"
-              min="1"
-              step="1"
-              inputmode="numeric"
-            />
-            <span id="page-total" class="page-total">/ -</span>
-            <button id="page-jump" class="secondary-button" type="button" disabled>
-              Go
-            </button>
-          </div>
-          <button id="page-next" class="secondary-button nav-button" type="button" disabled>
-            Next
-          </button>
         </div>
         <div class="highlight-controls" aria-label="Highlight controls">
           <div class="control-group">
@@ -283,6 +224,30 @@ app.innerHTML = `
             </div>
           </div>
         </div>
+        <div class="page-controls" aria-label="Page navigation">
+          <button id="page-prev" class="secondary-button nav-button" type="button" disabled>
+            Previous
+          </button>
+          <div class="page-jump">
+            <label class="page-label" for="page-jump-input">Page</label>
+            <input
+              id="page-jump-input"
+              class="page-input"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+            />
+            <span id="page-total" class="page-total">/ -</span>
+            <button id="page-jump" class="secondary-button" type="button" disabled>
+              Go to page
+            </button>
+          </div>
+          <span id="page-indicator" class="pill page-indicator">Page 1 / -</span>
+          <button id="page-next" class="secondary-button nav-button" type="button" disabled>
+            Next
+          </button>
+        </div>
         <div class="progress-panel" aria-live="polite">
           <div class="progress-meta">
             <span class="progress-title">Background indexing</span>
@@ -314,24 +279,22 @@ app.innerHTML = `
       </article>
     </section>
     <section id="study-strip" class="strip-card" aria-live="polite">
-      <div class="strip-header">
+      <button
+        id="study-strip-toggle"
+        class="strip-header"
+        type="button"
+        aria-expanded="true"
+        aria-controls="study-strip-body"
+      >
         <div>
           <h2>Study Strip</h2>
           <p class="muted">Verbatim highlights grouped by page. Pin the lines you want to keep.</p>
         </div>
         <div class="strip-header-actions">
           <span id="study-strip-count" class="pill">0 pinned</span>
-          <button
-            id="study-strip-toggle"
-            class="strip-toggle"
-            type="button"
-            aria-expanded="true"
-            aria-controls="study-strip-body"
-          >
-            Hide Study Strip
-          </button>
+          <span id="study-strip-toggle-label" class="strip-toggle-label">Hide Study Strip</span>
         </div>
-      </div>
+      </button>
       <div id="study-strip-body" class="strip-body">
         <div class="strip-actions">
           <div class="strip-action-row">
@@ -345,20 +308,90 @@ app.innerHTML = `
           </p>
         </div>
         <div id="study-strip-list" class="strip-list" role="list"></div>
-        <p id="study-strip-empty" class="muted strip-empty">Upload a PDF, DOCX, URL, or text to populate the study strip.</p>
+        <p id="study-strip-empty" class="muted strip-empty">
+          Upload a PDF, Word doc, URL, or paste text to populate the study strip.
+        </p>
       </div>
     </section>
   </main>
+  <div
+    id="url-modal"
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="url-modal-title"
+    aria-hidden="true"
+    hidden
+  >
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="url-modal-title">Fetch a URL</h3>
+        <button class="modal-close" type="button" data-modal-close>Close</button>
+      </div>
+      <p class="muted modal-note">Fetched through r.jina.ai for readability.</p>
+      <div class="modal-body">
+        <label class="url-label" for="url-input">URL</label>
+        <input
+          id="url-input"
+          class="url-input"
+          type="url"
+          placeholder="https://example.com/article"
+          inputmode="url"
+          autocomplete="url"
+        />
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-modal-close>Cancel</button>
+        <button id="url-fetch" class="primary-button" type="button">Fetch URL</button>
+      </div>
+    </div>
+  </div>
+  <div
+    id="text-modal"
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="text-modal-title"
+    aria-hidden="true"
+    hidden
+  >
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="text-modal-title">Paste text</h3>
+        <button class="modal-close" type="button" data-modal-close>Close</button>
+      </div>
+      <div class="modal-body">
+        <label class="url-label" for="text-input">Paste text</label>
+        <textarea
+          id="text-input"
+          class="text-input"
+          rows="8"
+          placeholder="Paste or type your reading here"
+        ></textarea>
+        <p class="muted text-hint">Tip: Press Ctrl or Cmd + Enter to render.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" data-modal-close>Cancel</button>
+        <button id="text-render" class="primary-button" type="button">Render text</button>
+      </div>
+    </div>
+  </div>
 `;
 
 const pdfInput = document.querySelector<HTMLInputElement>('#pdf-input');
 const docxInput = document.querySelector<HTMLInputElement>('#docx-input');
+const pdfButton = document.querySelector<HTMLButtonElement>('#pdf-button');
+const docxButton = document.querySelector<HTMLButtonElement>('#docx-button');
+const urlButton = document.querySelector<HTMLButtonElement>('#url-button');
+const textButton = document.querySelector<HTMLButtonElement>('#text-button');
 const urlInput = document.querySelector<HTMLInputElement>('#url-input');
 const urlFetchButton = document.querySelector<HTMLButtonElement>('#url-fetch');
 const textInput = document.querySelector<HTMLTextAreaElement>('#text-input');
 const textRenderButton = document.querySelector<HTMLButtonElement>('#text-render');
-const pdfDropzone = document.querySelector<HTMLLabelElement>('#pdf-dropzone');
-const docxDropzone = document.querySelector<HTMLLabelElement>('#docx-dropzone');
+const urlModal = document.querySelector<HTMLDivElement>('#url-modal');
+const textModal = document.querySelector<HTMLDivElement>('#text-modal');
+const modalCloseButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-modal-close]'));
+const uploadCard = document.querySelector<HTMLDivElement>('.upload-card');
 const fileName = document.querySelector<HTMLParagraphElement>('#file-name');
 const fileStatus = document.querySelector<HTMLParagraphElement>('#file-status');
 const pageIndicator = document.querySelector<HTMLSpanElement>('#page-indicator');
@@ -389,6 +422,7 @@ const studyStripCopyButton = document.querySelector<HTMLButtonElement>('#study-s
 const studyStripDownloadButton = document.querySelector<HTMLButtonElement>('#study-strip-download');
 const studyStripExportNote = document.querySelector<HTMLParagraphElement>('#study-strip-export-note');
 const studyStripToggleButton = document.querySelector<HTMLButtonElement>('#study-strip-toggle');
+const studyStripToggleLabel = document.querySelector<HTMLSpanElement>('#study-strip-toggle-label');
 const studyStripBody = document.querySelector<HTMLDivElement>('#study-strip-body');
 const highlightModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-highlight-mode]'),
@@ -424,6 +458,8 @@ let currentViewport: ReturnType<PDFPageProxy['getViewport']> | null = null;
 let pdfBytes: ArrayBuffer | null = null;
 let currentFileName: string | null = null;
 const pinnedHighlightIds = new Set<string>();
+let activeModal: HTMLElement | null = null;
+let lastModalFocus: HTMLElement | null = null;
 type DocumentSourceKind = 'pdf' | 'docx' | 'url' | 'text' | null;
 let currentSourceKind: DocumentSourceKind = null;
 type ReadingSourceKind = 'docx' | 'url' | 'text';
@@ -698,6 +734,8 @@ let pdfHasExtractedText = false;
 let activeTooltipSentenceId: string | null = null;
 
 const sentenceSegmenter = getSentenceSegmenter();
+
+const isActiveProcess = (processId: number) => processId === backgroundProcessId;
 
 const getEmbeddingDevice = (): EmbeddingDevice =>
   typeof navigator !== 'undefined' && 'gpu' in navigator ? 'webgpu' : 'wasm';
@@ -1352,6 +1390,64 @@ const setStatus = (message: string) => {
   if (fileStatus) {
     fileStatus.textContent = message;
   }
+};
+
+const openModal = (modal: HTMLElement | null, focusTarget?: HTMLElement | null) => {
+  if (!modal) {
+    return;
+  }
+  activeModal = modal;
+  lastModalFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modal.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  focusTarget?.focus();
+};
+
+const closeModal = (modal: HTMLElement | null) => {
+  if (!modal) {
+    return;
+  }
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+  if (activeModal === modal) {
+    activeModal = null;
+  }
+  document.body.classList.remove('modal-open');
+  if (lastModalFocus) {
+    lastModalFocus.focus();
+    lastModalFocus = null;
+  }
+};
+
+const handleUrlSubmit = () => {
+  if (!urlInput) {
+    return;
+  }
+  const value = urlInput.value.trim();
+  if (!value) {
+    setStatus('Enter a URL to fetch.');
+    return;
+  }
+  if (!parseUrlInput(value)) {
+    setStatus('Enter a valid URL to fetch.');
+    return;
+  }
+  void loadUrl(value);
+  closeModal(urlModal);
+};
+
+const handleTextSubmit = () => {
+  if (!textInput) {
+    return;
+  }
+  const normalized = textInput.value.replace(/\r\n/g, '\n').trim();
+  if (!normalized) {
+    setStatus('Paste some text to render.');
+    return;
+  }
+  void loadText(textInput.value);
+  closeModal(textModal);
 };
 
 const scannedPdfWarning =
@@ -2506,8 +2602,17 @@ const scrollToDocxPage = (pageNumber: number) => {
   }
 };
 
-const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) => {
+const renderDocxDocument = async (
+  html: string,
+  sourceKind: ReadingSourceKind,
+  processIdOverride?: number,
+) => {
   if (!docxViewer) {
+    return;
+  }
+
+  const processId = processIdOverride ?? backgroundProcessId;
+  if (!isActiveProcess(processId)) {
     return;
   }
 
@@ -2519,6 +2624,9 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
   indexedPages.clear();
   renderStudyStrip();
   docxPages = paginateDocxHtml(html);
+  if (!isActiveProcess(processId)) {
+    return;
+  }
 
   if (docxPages.length === 0) {
     docxViewer.innerHTML = `<p class="muted">No readable text found in this ${sourceLabel}.</p>`;
@@ -2531,7 +2639,6 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
   const { cappedTotalPages } = getAutoPageLimit(docxPages.length);
   const pageCapNote = getAutoPageNote(docxPages.length, cappedTotalPages);
   const autoIndexedPages = docxPages.slice(0, cappedTotalPages);
-  const processId = backgroundProcessId;
   backgroundTotalPages = cappedTotalPages;
   backgroundProcessedPages = 0;
   setProgress(
@@ -2545,6 +2652,9 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
   const firstPage = autoIndexedPages[0];
   setStatus(`Highlighting ${sourceLabel} page 1...`);
   const firstEntry = await indexDocxPage(firstPage, processId, sourceKind, false);
+  if (!isActiveProcess(processId)) {
+    return;
+  }
   if (!firstEntry) {
     if (autoSentenceCapReached) {
       notifySentenceCap();
@@ -2570,6 +2680,10 @@ const renderDocxDocument = async (html: string, sourceKind: ReadingSourceKind) =
     return;
   }
 
+  if (!isActiveProcess(processId)) {
+    return;
+  }
+
   if (backgroundTotalPages > 1) {
     void startDocxIndexing(autoIndexedPages.slice(1), processId, sourceKind);
   }
@@ -2586,20 +2700,33 @@ const loadDocx = async (file: File) => {
   currentFileName = file.name;
   setStatus('Loading DOCX...');
   setProgress(0, 0, 'Converting DOCX...');
+  const processId = backgroundProcessId;
 
   try {
     const buffer = await file.arrayBuffer();
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     const mammoth = await import('mammoth');
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     if (result.messages?.length) {
       console.debug('Mammoth conversion messages', result.messages);
     }
     const sanitizedHtml = sanitizeDocxHtml(result.value ?? '');
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     docxHtml = sanitizedHtml;
     setViewerMode('docx');
     setStatus('Paginating DOCX into pages...');
     setProgress(0, 0, 'Preparing DOCX pages...');
-    await renderDocxDocument(docxHtml ?? '', 'docx');
+    await renderDocxDocument(docxHtml ?? '', 'docx', processId);
   } catch (error) {
     console.error(error);
     setStatus('Unable to render this DOCX. Try another file.');
@@ -2636,16 +2763,19 @@ const loadUrl = async (input: string) => {
       throw new Error(`URL fetch failed with status ${response.status}`);
     }
     const text = await response.text();
-    if (processId !== backgroundProcessId) {
+    if (!isActiveProcess(processId)) {
       return;
     }
     const renderedHtml = renderMarkdownToHtml(text, parsed.sourceUrl);
     const sanitizedHtml = sanitizeDocxHtml(renderedHtml);
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     docxHtml = sanitizedHtml;
     setViewerMode('url');
     setStatus('Paginating URL content into pages...');
     setProgress(0, 0, 'Preparing URL pages...');
-    await renderDocxDocument(docxHtml ?? '', 'url');
+    await renderDocxDocument(docxHtml ?? '', 'url', processId);
   } catch (error) {
     console.error(error);
     setStatus('Unable to fetch this URL. Check the link and try again.');
@@ -2676,14 +2806,18 @@ const loadText = async (input: string) => {
   currentFileName = 'Pasted text';
   setStatus('Preparing pasted text...');
   setProgress(0, 0, 'Preparing pasted text...');
+  const processId = backgroundProcessId;
 
   const renderedHtml = renderPlainTextToHtml(normalized);
   const sanitizedHtml = sanitizeDocxHtml(renderedHtml);
+  if (!isActiveProcess(processId)) {
+    return;
+  }
   docxHtml = sanitizedHtml;
   setViewerMode('text');
   setStatus('Paginating pasted text into pages...');
   setProgress(0, 0, 'Preparing text pages...');
-  await renderDocxDocument(docxHtml ?? '', 'text');
+  await renderDocxDocument(docxHtml ?? '', 'text', processId);
 };
 
 const isPdfTextItem = (item: PdfTextItem | PdfTextMarkedContent): item is PdfTextItem =>
@@ -3268,14 +3402,14 @@ const setStudyStripExportState = (pinnedCount: number, totalCount: number) => {
 };
 
 const setStudyStripVisibility = (isVisible: boolean) => {
-  if (!studyStripBody || !studyStripToggleButton || !studyStripSection) {
+  if (!studyStripBody || !studyStripToggleButton || !studyStripSection || !studyStripToggleLabel) {
     return;
   }
   isStudyStripVisible = isVisible;
   studyStripBody.hidden = !isVisible;
   studyStripSection.classList.toggle('is-collapsed', !isVisible);
   studyStripToggleButton.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
-  studyStripToggleButton.textContent = isVisible ? 'Hide Study Strip' : 'Show Study Strip';
+  studyStripToggleLabel.textContent = isVisible ? 'Hide Study Strip' : 'Show Study Strip';
 };
 
 const initializeStudyStripVisibility = () => {
@@ -3570,7 +3704,7 @@ const renderStudyStrip = () => {
 
   if (!sections.length) {
     if (currentSourceKind === 'docx') {
-      studyStripEmpty.textContent = 'DOCX highlights will appear here once available.';
+      studyStripEmpty.textContent = 'Word doc highlights will appear here once available.';
     } else if (currentSourceKind === 'url') {
       studyStripEmpty.textContent = 'URL highlights will appear here once available.';
     } else if (currentSourceKind === 'text') {
@@ -3578,7 +3712,7 @@ const renderStudyStrip = () => {
     } else {
       studyStripEmpty.textContent =
         indexedPages.size === 0
-          ? 'Upload a PDF, DOCX, URL, or text to populate the study strip.'
+          ? 'Upload a PDF, Word doc, URL, or paste text to populate the study strip.'
           : 'No highlights available yet.';
     }
     studyStripEmpty.hidden = false;
@@ -4426,6 +4560,19 @@ const startBackgroundIndexing = async (
         return;
       }
       indexedPages.set(pageNumber, entry);
+      if (currentSourceKind === 'pdf' && currentPage?.pageNumber === pageNumber) {
+        currentPageTextMap = entry.textMap;
+        currentPageSentences = entry.sentences;
+        currentPageEmbeddings = entry.embeddings;
+        currentPageHighlightSentences = getAutoHighlightsForEntry(entry);
+        currentPageHighlightEmphasis = getAutoHighlightEmphasisForEntry(entry);
+        currentPageQuestionHighlightEmphasis = getQuestionHighlightEmphasisForEntry(entry);
+        updatePdfScanWarning(entry.textMap);
+        renderHighlights();
+        if (currentViewMode === 'list') {
+          renderHighlightListView();
+        }
+      }
       renderStudyStrip();
     } catch (error) {
       console.error('Failed to index page', pageNumber, error);
@@ -4579,14 +4726,31 @@ const loadPdf = async (file: File) => {
 
   try {
     const buffer = await file.arrayBuffer();
+    if (!isActiveProcess(processId)) {
+      return;
+    }
+    const loadingTask = getDocument({ data: buffer });
+    const nextPdfDoc = await loadingTask.promise;
+    if (!isActiveProcess(processId)) {
+      void nextPdfDoc.destroy().catch((error) => {
+        console.debug('Failed to destroy stale PDF document', error);
+      });
+      return;
+    }
+    const firstPage = await nextPdfDoc.getPage(1);
+    if (!isActiveProcess(processId)) {
+      void nextPdfDoc.destroy().catch((error) => {
+        console.debug('Failed to destroy stale PDF document', error);
+      });
+      return;
+    }
     pdfBytes = buffer;
     pdfDoc?.destroy();
-    const loadingTask = getDocument({ data: buffer });
-    pdfDoc = await loadingTask.promise;
-    currentPage = await pdfDoc.getPage(1);
-    setPageIndicator(1, pdfDoc.numPages);
-    const { cappedTotalPages } = getAutoPageLimit(pdfDoc.numPages);
-    const pageCapNote = getAutoPageNote(pdfDoc.numPages, cappedTotalPages);
+    pdfDoc = nextPdfDoc;
+    currentPage = firstPage;
+    setPageIndicator(1, nextPdfDoc.numPages);
+    const { cappedTotalPages } = getAutoPageLimit(nextPdfDoc.numPages);
+    const pageCapNote = getAutoPageNote(nextPdfDoc.numPages, cappedTotalPages);
     backgroundTotalPages = cappedTotalPages;
     backgroundProcessedPages = 0;
     setProgress(
@@ -4595,9 +4759,15 @@ const loadPdf = async (file: File) => {
       appendNote(`Preparing page 1 of ${backgroundTotalPages}...`, pageCapNote),
     );
     setViewerMode('pdf');
-    setStatus(`Rendering page 1 of ${pdfDoc.numPages}...`);
+    setStatus(`Rendering page 1 of ${nextPdfDoc.numPages}...`);
     await renderPage(currentPage);
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     currentPageTextMap = await extractPageTextMap(currentPage);
+    if (!isActiveProcess(processId)) {
+      return;
+    }
     updatePdfScanWarning(currentPageTextMap);
     currentPageSentences = segmentPageText(
       currentPageTextMap,
@@ -4626,11 +4796,11 @@ const loadPdf = async (file: File) => {
     setExportEnabled(true);
     const highlightStats = renderHighlights();
     renderStudyStrip();
-    const statusPrefix = `Rendered page 1 of ${pdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences.`;
+    const statusPrefix = `Rendered page 1 of ${nextPdfDoc.numPages}. Extracted ${currentPageTextMap.items.length} text items, ${currentPageSentences.length} sentences.`;
     setStatus(`${statusPrefix} Highlighted ${highlightStats.sentences} sentences.`);
     backgroundProcessedPages = 1;
     const progressMessage =
-      pdfDoc.numPages > 1
+      nextPdfDoc.numPages > 1
         ? 'Page 1 ready. Indexing remaining pages...'
         : 'Single-page PDF ready.';
     setProgress(backgroundProcessedPages, backgroundTotalPages, appendNote(progressMessage, pageCapNote));
@@ -4650,7 +4820,7 @@ const loadPdf = async (file: File) => {
   }
 };
 
-const bindDropzone = (zone: HTMLLabelElement | null, onFile: (file: File) => void) => {
+const bindUploadCardDrop = (zone: HTMLElement | null) => {
   if (!zone) {
     return;
   }
@@ -4664,14 +4834,6 @@ const bindDropzone = (zone: HTMLLabelElement | null, onFile: (file: File) => voi
     zone.classList.remove('is-dragover');
   });
 
-  zone.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' && event.key !== ' ') {
-      return;
-    }
-    event.preventDefault();
-    zone.click();
-  });
-
   zone.addEventListener('drop', (event) => {
     event.preventDefault();
     zone.classList.remove('is-dragover');
@@ -4679,7 +4841,15 @@ const bindDropzone = (zone: HTMLLabelElement | null, onFile: (file: File) => voi
     if (!file) {
       return;
     }
-    onFile(file);
+    if (isPdfFile(file)) {
+      void loadPdf(file);
+      return;
+    }
+    if (isDocxFile(file)) {
+      void loadDocx(file);
+      return;
+    }
+    setStatus('Drop a PDF or DOCX file to upload.');
   });
 };
 
@@ -4774,6 +4944,50 @@ pageJumpInput?.addEventListener('keydown', (event) => {
   handlePageJump();
 });
 
+pdfButton?.addEventListener('click', () => {
+  pdfInput?.click();
+});
+
+docxButton?.addEventListener('click', () => {
+  docxInput?.click();
+});
+
+urlButton?.addEventListener('click', () => {
+  openModal(urlModal, urlInput);
+});
+
+textButton?.addEventListener('click', () => {
+  openModal(textModal, textInput);
+});
+
+modalCloseButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (activeModal) {
+      closeModal(activeModal);
+    }
+  });
+});
+
+urlModal?.addEventListener('click', (event) => {
+  if (event.target === urlModal) {
+    closeModal(urlModal);
+  }
+});
+
+textModal?.addEventListener('click', (event) => {
+  if (event.target === textModal) {
+    closeModal(textModal);
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !activeModal) {
+    return;
+  }
+  event.preventDefault();
+  closeModal(activeModal);
+});
+
 pdfInput?.addEventListener('change', (event) => {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
@@ -4795,10 +5009,7 @@ docxInput?.addEventListener('change', (event) => {
 });
 
 urlFetchButton?.addEventListener('click', () => {
-  if (!urlInput) {
-    return;
-  }
-  void loadUrl(urlInput.value);
+  handleUrlSubmit();
 });
 
 urlInput?.addEventListener('keydown', (event) => {
@@ -4806,14 +5017,11 @@ urlInput?.addEventListener('keydown', (event) => {
     return;
   }
   event.preventDefault();
-  void loadUrl(urlInput.value);
+  handleUrlSubmit();
 });
 
 textRenderButton?.addEventListener('click', () => {
-  if (!textInput) {
-    return;
-  }
-  void loadText(textInput.value);
+  handleTextSubmit();
 });
 
 textInput?.addEventListener('keydown', (event) => {
@@ -4824,7 +5032,7 @@ textInput?.addEventListener('keydown', (event) => {
     return;
   }
   event.preventDefault();
-  void loadText(textInput.value);
+  handleTextSubmit();
 });
 
 questionButton?.addEventListener('click', () => {
@@ -4854,13 +5062,7 @@ questionPresetButtons.forEach((button) => {
   });
 });
 
-bindDropzone(pdfDropzone, (file) => {
-  void loadPdf(file);
-});
-
-bindDropzone(docxDropzone, (file) => {
-  void loadDocx(file);
-});
+bindUploadCardDrop(uploadCard);
 
 highlightModeButtons.forEach((button) => {
   button.addEventListener('click', () => {
